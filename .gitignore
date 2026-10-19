@@ -8,3 +8,22 @@ __pycache__/
 build/
 dist/
 .backups/
+/docs/archive/
+
+# Local downloads and diagnostic output
+*.AppImage
+*.AppImage.zsync
+*.log
+.coverage
+.coverage.*
+htmlcov/
+
+# Local environment and editor files
+.env
+.env.*
+!.env.example
+.DS_Store
+Thumbs.db
+*~
+*.swp
+*.swo

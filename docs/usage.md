@@ -57,8 +57,9 @@ Supported release tags are `v1.2.3` or `1.2.3`. Supported filenames are:
 
 Filename matching ignores letter case, while downloads use the exact published filename.
 
-Architectures are `x86_64` and `aarch64`, matched to the host. This describes managed
-application downloads; the AppHarbour launcher package currently targets x86_64 only.
+Architectures are `x86_64` (also `x64` or `amd64`) and `aarch64` (also `arm64`),
+matched to the host. This describes managed application downloads; the AppHarbour
+launcher package currently targets x86_64 only.
 Other release naming conventions are not supported yet.
 
 A published SHA-256 checksum is required. GitHub's asset digest is used when available;

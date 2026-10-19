@@ -194,6 +194,61 @@ class ReleaseTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "repository"):
             releases.select_release(app, data, arch)
 
+    def test_architecture_aliases_work_for_api_fallback_and_cache(self):
+        app = custom_app("https://github.com/therichronicles/EarthCraft")
+        for arch, alias in (("x86_64", "x64"), ("x86_64", "amd64"), ("aarch64", "arm64")):
+            with self.subTest(arch=arch, alias=alias):
+                name = f"earthcraft-0.2.0-linux-{alias}.AppImage"
+                url = f"{app.source_url}/releases/download/v0.2.0/{name}"
+                release = releases.Release("0.2.0", name, url, 100, self.release.sha256)
+                asset = {
+                    "name": name,
+                    "browser_download_url": url,
+                    "size": release.size,
+                    "digest": "sha256:" + release.sha256,
+                }
+                data = {"tag_name": "v0.2.0", "assets": [asset]}
+                with (
+                    patch.object(releases, "architecture", return_value=arch),
+                    patch.object(releases, "read_metadata", return_value=json.dumps(data).encode()),
+                ):
+                    self.assertEqual(releases.api_release(app, Event()), release)
+                other_arch = "aarch64" if arch == "x86_64" else "x86_64"
+                with self.assertRaisesRegex(ValueError, "AppImage filename"):
+                    releases.select_release(app, data, other_arch)
+                zsync = {**asset, "name": name + ".zsync", "browser_download_url": url + ".zsync"}
+                with self.assertRaisesRegex(ValueError, "AppImage filename"):
+                    releases.select_release(app, {**data, "assets": [zsync]}, arch)
+                with (
+                    patch.object(releases, "architecture", return_value=arch),
+                    patch.object(releases, "request") as request,
+                    patch.object(
+                        releases,
+                        "read_metadata",
+                        return_value=f"{release.sha256} {name}\n".encode(),
+                    ),
+                ):
+                    request.side_effect = [
+                        Response(f"{app.source_url}/releases/tag/v0.2.0"),
+                        Response(url, {"Content-Length": str(release.size)}),
+                    ]
+                    self.assertEqual(releases.page_release(app, Event()), release)
+                    request.assert_called_with(url, method="HEAD")
+                    atomic_json(
+                        self.cache / f"{app.id}-{arch}.json",
+                        {"checked_at": time.time(), "release": asdict(release)},
+                    )
+                    self.assertEqual(releases.cached_release(app, self.cache), release)
+                canonical = {
+                    **asset,
+                    "name": name.replace(alias, arch),
+                    "browser_download_url": url.replace(alias, arch),
+                }
+                selected = releases.select_release(
+                    app, {**data, "assets": [asset, canonical]}, arch
+                )
+                self.assertEqual(selected.name, canonical["name"])
+
     def test_checksum_manifest_rejects_conflicting_entries(self):
         line = f"{self.release.sha256} *{self.release.name}\n"
         self.assertEqual(

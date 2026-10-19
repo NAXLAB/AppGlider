@@ -8,7 +8,6 @@ tests/           Automated application tests
 packaging/       AppImage scripts, entry point and dependency locks
 .github/         GitHub Actions workflow
 docs/            Usage, development and build documentation
-docs/archive/    Historical research and earlier screenshots
 ```
 
 Local generated directories are ignored by Git:
@@ -17,6 +16,9 @@ Local generated directories are ignored by Git:
 - `build/` — packaging environment, cached downloads and temporary build files.
 - `dist/` — finished AppImage and checksum file.
 - `.backups/` — local recovery archives; preserve these when cleaning generated files.
+
+Keep obsolete research and extra screenshots in `.backups/`, outside the published docs.
+Loose AppImages, logs, local `.env` files and editor temporary files are also ignored.
 
 ## Set up
 
@@ -56,7 +58,7 @@ The version comes from `pyproject.toml`.
 Test the package without FUSE, using a disposable first-run home:
 
 ```sh
-python3 packaging/smoke_test.py dist/AppHarbour-0.1.1-linux-x86_64.AppImage
+python3 packaging/smoke_test.py dist/AppHarbour-0.1.2-linux-x86_64.AppImage
 ```
 
 Verify its checksum from inside `dist/` with `sha256sum -c SHA256SUMS.txt`.

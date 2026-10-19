@@ -13,14 +13,17 @@ producing downloadable AppImages and checksums.
 On pushes, pull requests and manual dispatch, the workflow:
 
 1. Starts an Ubuntu 22.04 x86_64 runner with Python 3.13.
-2. Installs development and packaging dependencies, using the pinned runtime versions.
+2. Installs application and development dependencies, using the pinned runtime versions.
 3. Runs Ruff, formatting checks, mypy and the application tests.
-4. Builds the trimmed AppImage with bundled Python and Qt.
-5. Opens it with a disposable first-run home and checks startup, certificates and its shortcut.
-6. Uploads the AppImage and `SHA256SUMS.txt` as a workflow artifact.
 
-Once the repository is on GitHub, open **Actions → Linux AppImage**, select a successful
-run and download **AppHarbour-linux-x86_64** under **Artifacts**. GitHub requires a signed-in
+Version-tag pushes and manual dispatch also install the packaging dependencies, build
+the trimmed AppImage with bundled Python and Qt, and open it with a disposable first-run
+home to check startup, certificates and its shortcut. They upload the AppImage and
+`SHA256SUMS.txt` as a workflow artifact. Ordinary branch pushes and pull requests skip
+packaging, so pushing a commit and its tag builds the AppImage only once.
+
+Open **Actions → Linux AppImage**, select a successful tag or manual run and download
+**AppHarbour-linux-x86_64** under **Artifacts**. GitHub requires a signed-in
 account with repository access to download workflow artifacts. Restore the AppImage's
 executable permission with `chmod +x` after downloading.
 
@@ -32,19 +35,21 @@ before GitHub can execute it.
 
 | Trigger | Result |
 | --- | --- |
-| Pull request or ordinary push | Checks and a test-build artifact |
-| Version tag such as `v0.1.0` | Checks, build and a draft GitHub Release |
+| Pull request or ordinary push | Checks and tests |
+| Manual dispatch | Checks, tests and a test-build artifact |
+| Version tag such as `v0.1.2` | Checks, tests, build and a draft GitHub Release |
 | Maintainer publishes the draft | AppImage and checksum become release downloads |
 
 To prepare a release:
 
-1. Set the version in `pyproject.toml`, for example `0.1.0`, and commit the source and workflow.
+1. Set the version in `pyproject.toml`, for example `0.1.2`, and update the HTTP User-Agent
+   in `src/appharbour/releases.py` and the documented run commands. Commit the changes.
 2. Push that commit to the GitHub repository.
 3. Create and push the matching tag:
 
    ```sh
-   git tag v0.1.0
-   git push origin v0.1.0
+   git tag v0.1.2
+   git push origin v0.1.2
    ```
 
 The tag must exactly match `v` plus the project version; a mismatch stops the build.

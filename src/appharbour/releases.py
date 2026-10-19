@@ -103,7 +103,7 @@ def request(url: str, *, method: str = "GET") -> Any:
     host = urlsplit(url).netloc
     if _RETRY_AFTER.get(host, 0) > time.time():
         raise RateLimited(host, _RETRY_AFTER[host])
-    req = Request(url, headers={"User-Agent": "AppHarbour/0.1.1"}, method=method)
+    req = Request(url, headers={"User-Agent": "AppHarbour/0.1.2"}, method=method)
     try:
         return build_opener(GitHubRedirect()).open(req, timeout=20)
     except HTTPError as error:
@@ -157,11 +157,13 @@ class Release:
 
 
 def asset_names(app: App, version: str, arch: str) -> Iterator[str]:
+    aliases = {"x86_64": ("x86_64", "x64", "amd64"), "aarch64": ("aarch64", "arm64")}
     for stem in stems(app):
-        yield f"{stem}-{version}-linux-{arch}.AppImage"
-        yield f"{stem}-linux-{arch}.AppImage"
-        yield f"{stem}-{version}-{arch}.AppImage"
-        yield f"{stem}-{arch}.AppImage"
+        for filename_arch in aliases.get(arch, (arch,)):
+            yield f"{stem}-{version}-linux-{filename_arch}.AppImage"
+            yield f"{stem}-linux-{filename_arch}.AppImage"
+            yield f"{stem}-{version}-{filename_arch}.AppImage"
+            yield f"{stem}-{filename_arch}.AppImage"
 
 
 def select_release(app: App, data: object, arch: str) -> Release:
