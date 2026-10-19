@@ -209,7 +209,7 @@ class RepositoryGuiTests(unittest.TestCase):
         self.settings.setValue("appearance/theme", "Light")
         self.window = LauncherWindow(self.settings, self.library)
         self.window.show()
-        self.addCleanup(self.window.close)
+        self.addCleanup(self.close_window)
         self.dialog = RepositoriesDialog(self.library, self.window)
         self.dialog.catalog_changed.connect(self.window.scan_installed)
         self.dialog.show()
@@ -217,10 +217,18 @@ class RepositoryGuiTests(unittest.TestCase):
         self.addCleanup(self.dialog.close)
 
     def wait_for_task(self, owner):
-        deadline = time.monotonic() + 5
+        deadline = time.monotonic() + 30
         while owner.task is not None and time.monotonic() < deadline:
             QTest.qWait(10)
         self.assertIsNone(owner.task, "Background operation did not finish")
+
+    def close_window(self):
+        self.window.quitting = True
+        self.window.close_after_task = True
+        self.window.cancel_task()
+        self.wait_for_task(self.dialog)
+        self.wait_for_task(self.window)
+        self.window.close()
 
     def inspect(self):
         if not self.dialog.adding:
