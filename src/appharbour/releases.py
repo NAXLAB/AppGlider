@@ -103,7 +103,7 @@ def request(url: str, *, method: str = "GET") -> Any:
     host = urlsplit(url).netloc
     if _RETRY_AFTER.get(host, 0) > time.time():
         raise RateLimited(host, _RETRY_AFTER[host])
-    req = Request(url, headers={"User-Agent": "AppHarbour/0.1.0"}, method=method)
+    req = Request(url, headers={"User-Agent": "AppHarbour/0.1.1"}, method=method)
     try:
         return build_opener(GitHubRedirect()).open(req, timeout=20)
     except HTTPError as error:
@@ -174,10 +174,20 @@ def select_release(app: App, data: object, arch: str) -> Release:
     assets = data.get("assets")
     if not isinstance(assets, list):
         raise ValueError("This release has no downloadable files.")
-    for name in asset_names(app, version, arch):
-        asset = next((a for a in assets if isinstance(a, dict) and a.get("name") == name), None)
+    for expected in asset_names(app, version, arch):
+        asset = next(
+            (
+                a
+                for a in assets
+                if isinstance(a, dict)
+                and isinstance(a.get("name"), str)
+                and a["name"].casefold() == expected.casefold()
+            ),
+            None,
+        )
         if asset is None:
             continue
+        name = asset["name"]
         url = asset.get("browser_download_url")
         prefix = f"https://github.com/{app.repo}/releases/download/"
         if (
@@ -194,9 +204,9 @@ def select_release(app: App, data: object, arch: str) -> Release:
         if not re.fullmatch(r"[a-fA-F0-9]{64}", sha256):
             sha256 = ""
         return Release(version, name, url, size, sha256.lower())
-    example = next(asset_names(app, version, arch))
+    example = f"{stems(app)[0]}-{version}-{arch}.AppImage"
     raise ValueError(
-        f"No supported Linux {arch} AppImage filename was found. Expected a name like {example}."
+        f"No supported {arch} AppImage filename was found. Expected a name like {example}."
     )
 
 
@@ -243,13 +253,17 @@ def page_release(app: App, cancel: Event) -> Release:
     check_cancel(cancel)
     sums = checksums(read_metadata(download_prefix + "SHA256SUMS.txt").decode("utf-8"))
     name = next(
-        (name for name in asset_names(app, tag.removeprefix("v"), architecture()) if name in sums),
+        (
+            name
+            for expected in asset_names(app, tag.removeprefix("v"), architecture())
+            for name in sums
+            if name.casefold() == expected.casefold()
+        ),
         None,
     )
     if name is None:
         raise ValueError(
-            f"No supported Linux {architecture()} AppImage filename "
-            "with a published checksum was found."
+            f"No supported {architecture()} AppImage filename with a published checksum was found."
         )
     check_cancel(cancel)
     with request(download_prefix + name, method="HEAD") as response:

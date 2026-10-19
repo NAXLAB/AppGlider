@@ -55,6 +55,8 @@ Supported release tags are `v1.2.3` or `1.2.3`. Supported filenames are:
 <repository>-<architecture>.AppImage
 ```
 
+Filename matching ignores letter case, while downloads use the exact published filename.
+
 Architectures are `x86_64` and `aarch64`, matched to the host. This describes managed
 application downloads; the AppHarbour launcher package currently targets x86_64 only.
 Other release naming conventions are not supported yet.

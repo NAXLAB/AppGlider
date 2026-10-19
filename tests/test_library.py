@@ -344,7 +344,7 @@ class ReleaseTests(unittest.TestCase):
         metadata = self.metadata()
         selected = select_release(APP, metadata, architecture())
         self.assertEqual(selected.version, "1.2.3")
-        with self.assertRaisesRegex(ValueError, "No supported Linux"):
+        with self.assertRaisesRegex(ValueError, "No supported wrong-arch AppImage filename"):
             select_release(APP, metadata, "wrong-arch")
         metadata["assets"][0]["browser_download_url"] = "https://evil.example/payload.AppImage"
         with self.assertRaisesRegex(ValueError, "repository"):

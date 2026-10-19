@@ -15,6 +15,7 @@ from urllib.error import HTTPError
 from test_library import APP, appimage_bytes, release_for
 
 from appharbour import releases
+from appharbour.catalog import custom_app
 from appharbour.storage import atomic_json
 
 
@@ -147,6 +148,51 @@ class ReleaseTests(unittest.TestCase):
                     self.cache_file, {"checked_at": time.time(), "release": asdict(release)}
                 )
                 self.assertEqual(releases.cached_release(APP, self.cache), release)
+
+    def test_mixed_case_appimage_names_keep_the_actual_download_name(self):
+        app = custom_app("https://github.com/mitcad/Mitcad")
+        arch = releases.architecture()
+        name = f"Mitcad-0.13.1-{arch}.AppImage"
+        url = f"https://github.com/mitcad/Mitcad/releases/download/v0.13.1/{name}"
+        release = releases.Release("0.13.1", name, url, self.release.size, self.release.sha256)
+        asset = {
+            "name": name,
+            "browser_download_url": url,
+            "size": release.size,
+            "digest": "sha256:" + release.sha256,
+        }
+        data = {"tag_name": "v0.13.1", "assets": [None, {"name": None}, asset]}
+        self.assertEqual(releases.select_release(app, data, arch), release)
+        other_arch = "aarch64" if arch == "x86_64" else "x86_64"
+        with self.assertRaisesRegex(ValueError, "AppImage filename"):
+            releases.select_release(app, data, other_arch)
+        with patch.object(releases, "read_metadata", return_value=json.dumps(data).encode()):
+            self.assertEqual(releases.api_release(app, Event()), release)
+        fallback_url = f"{app.source_url}/releases/download/v0.13.1/{name}"
+        with (
+            patch.object(releases, "request") as request,
+            patch.object(
+                releases,
+                "read_metadata",
+                return_value=f"{release.sha256} {name}\n".encode(),
+            ),
+        ):
+            request.side_effect = [
+                Response("https://github.com/mitcad/Mitcad/releases/tag/v0.13.1"),
+                Response(fallback_url, {"Content-Length": str(release.size)}),
+            ]
+            self.assertEqual(
+                releases.page_release(app, Event()), replace(release, url=fallback_url)
+            )
+            request.assert_called_with(fallback_url, method="HEAD")
+        atomic_json(
+            self.cache / f"{app.id}-{arch}.json",
+            {"checked_at": time.time(), "release": asdict(release)},
+        )
+        self.assertEqual(releases.cached_release(app, self.cache), release)
+        asset["browser_download_url"] = url.rsplit("/", 1)[0] + "/" + name.lower()
+        with self.assertRaisesRegex(ValueError, "repository"):
+            releases.select_release(app, data, arch)
 
     def test_checksum_manifest_rejects_conflicting_entries(self):
         line = f"{self.release.sha256} *{self.release.name}\n"
