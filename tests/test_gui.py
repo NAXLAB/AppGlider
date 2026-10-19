@@ -319,6 +319,7 @@ class LibraryTests(unittest.TestCase):
         deadline = time.monotonic() + 5
         while self.window.task is not None and time.monotonic() < deadline:
             QTest.qWait(10)
+            time.sleep(0.001)  # Let Python worker threads run between Qt waits.
         self.assertIsNone(self.window.task, "Background operation did not finish")
 
     def test_new_folder_name_is_readable_in_light_and_dark_themes(self) -> None:

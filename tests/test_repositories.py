@@ -217,9 +217,10 @@ class RepositoryGuiTests(unittest.TestCase):
         self.addCleanup(self.dialog.close)
 
     def wait_for_task(self, owner):
-        deadline = time.monotonic() + 30
+        deadline = time.monotonic() + 5
         while owner.task is not None and time.monotonic() < deadline:
             QTest.qWait(10)
+            time.sleep(0.001)  # Let Python worker threads run between Qt waits.
         self.assertIsNone(owner.task, "Background operation did not finish")
 
     def close_window(self):
