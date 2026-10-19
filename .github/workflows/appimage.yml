@@ -13,6 +13,7 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-22.04
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: actions/setup-python@v7.0.0
@@ -41,8 +42,14 @@ jobs:
         run: |
           ruff check .
           ruff format --check .
-          mypy
-          QT_QPA_PLATFORM=offscreen python -m unittest discover -s tests -q
+      - name: Check types
+        timeout-minutes: 3
+        run: mypy
+      - name: Test application
+        timeout-minutes: 3
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: timeout --signal=ABRT --kill-after=10s 120s python -X faulthandler -m unittest discover -s tests -v
       - name: Build and test AppImage
         run: |
           python packaging/build_appimage.py
