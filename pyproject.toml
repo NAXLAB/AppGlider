@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "appharbour"
+version = "0.1.0"
+description = "A Linux AppImage installer, updater and launcher"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.11"
+dependencies = ["PySide6-Essentials>=6.8,<7"]
+
+[project.optional-dependencies]
+dev = ["ruff", "mypy"]
+
+[project.gui-scripts]
+appharbour = "appharbour.app:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+appharbour = ["assets/icons/*.png", "assets/licenses/*.txt"]
+
+[tool.setuptools.data-files]
+"share/doc/appharbour" = ["ATTRIBUTION.md", "THIRD_PARTY_NOTICES.md"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+files = ["src"]

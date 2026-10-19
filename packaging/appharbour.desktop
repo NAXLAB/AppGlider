@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=AppHarbour
+Comment=Install, update and launch Linux AppImages
+Exec=appharbour
+Icon=appharbour
+Terminal=false
+Categories=Utility;
