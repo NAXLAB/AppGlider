@@ -31,7 +31,7 @@ from PySide6.QtWidgets import (
 )
 from test_library import APP, appimage_bytes, release_for
 
-from appharbour import APP_ICON, APP_VERSION
+from appharbour import APP_ICON, APP_VERSION, github_status, releases
 from appharbour.catalog import APPS, custom_app
 from appharbour.jobs import TaskResult
 from appharbour.library import Installed, Library
@@ -583,7 +583,9 @@ class LibraryTests(unittest.TestCase):
         with (
             patch("appharbour.window.discover_releases", side_effect=OSError("Offline")),
             patch("appharbour.window.QMessageBox.warning"),
+            patch("appharbour.window.QThreadPool.globalInstance") as pool,
         ):
+            pool.return_value.start.side_effect = lambda task: task.run()
             QTimer.singleShot(0, inspect)
             self.window.open_details(APP.id)
         self.assertEqual(observed, [info.stable.version, "Offline", True])
@@ -895,6 +897,56 @@ class LibraryTests(unittest.TestCase):
         QTimer.singleShot(0, inspect_about)
         QTest.mouseClick(self.window.version_button, Qt.MouseButton.LeftButton)
         self.assertEqual(observations, ["About"])
+
+    def test_github_indicator_opens_live_status_without_network_requests(self) -> None:
+        observed = []
+
+        def inspect_status() -> None:
+            dialog = self.qt.activeModalWidget()
+            if not isinstance(dialog, SettingsDialog):
+                return
+            try:
+                observed.append(dialog.sections.currentItem().text())
+                observed.append(dialog.github_details.text())
+                github_status.observe_headers(
+                    {
+                        "X-RateLimit-Remaining": "0",
+                        "X-RateLimit-Limit": "60",
+                        "X-RateLimit-Reset": "1600",
+                    }
+                )
+                github_status.release_result("Public GitHub pages", APP.repo, 990)
+                releases._RETRY_AFTER["github.com"] = 1120
+                dialog.github_timer.timeout.emit()
+                self.window.github_timer.timeout.emit()
+                self.qt.processEvents()
+                observed.append(dialog.github_details.text())
+                self.assertEqual(self.window.github_button.text(), "GitHub: limited")
+                self.assertTrue(self.window.github_button.property("limited"))
+                label = dialog.github_details
+                self.assertGreaterEqual(label.height(), label.heightForWidth(label.width()))
+            finally:
+                dialog.reject()
+                self.assertFalse(dialog.github_timer.isActive())
+
+        with (
+            patch.object(github_status, "_status", github_status.GitHubStatus()),
+            patch.object(github_status.time, "time", return_value=1000),
+            patch.dict(releases._RETRY_AFTER, {}, clear=True),
+            patch.object(releases, "request") as request,
+        ):
+            self.window.update_github_status()
+            self.assertEqual(self.window.github_button.text(), "GitHub status")
+            self.assertEqual(
+                self.window.github_button.cursor().shape(), Qt.CursorShape.PointingHandCursor
+            )
+            QTimer.singleShot(0, inspect_status)
+            QTest.mouseClick(self.window.github_button, Qt.MouseButton.LeftButton)
+            request.assert_not_called()
+        self.assertEqual(observed[0], "Applications")
+        self.assertIn("unknown", observed[1])
+        self.assertIn("0 of 60", observed[2])
+        self.assertIn("retry in 10 min", observed[2])
 
     def test_release_badges_describe_the_version_and_beta_waits_for_stable(self) -> None:
         card = self.window.cards["solidcraft"]

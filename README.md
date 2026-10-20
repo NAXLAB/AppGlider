@@ -21,6 +21,7 @@ Versions shown are illustrative.
 - Add supported GitHub repositories directly from the library.
 - Choose stable releases or include previews from each card’s menu, and inspect releases in app details.
 - Choose between AppImage build variants when needed, with the choice remembered for updates.
+- See GitHub request limits, retry times and cached release information from the footer.
 - Discover their application icons or choose a local PNG/SVG, with offline icon storage.
 - Create application-menu shortcuts and access the launcher from the system tray.
 
@@ -31,11 +32,11 @@ left alone. **Installed (N)** and **Updates (N)** show library totals, even whil
 
 The AppHarbour AppImage includes Python and Qt. Use a release AppImage, or follow the
 [build instructions](docs/development.md#build-the-appimage) to create one locally.
-For version 0.2.2:
+For version 0.2.3:
 
 ```sh
-chmod +x AppHarbour-0.2.2-linux-x86_64.AppImage
-./AppHarbour-0.2.2-linux-x86_64.AppImage
+chmod +x AppHarbour-0.2.3-linux-x86_64.AppImage
+./AppHarbour-0.2.3-linux-x86_64.AppImage
 ```
 
 Keep the file in a permanent location: AppHarbour creates a menu shortcut pointing to it.

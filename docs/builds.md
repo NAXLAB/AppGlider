@@ -37,20 +37,20 @@ before GitHub can execute it.
 | --- | --- |
 | Pull request or ordinary push | Checks and tests |
 | Manual dispatch | Checks, tests and a test-build artifact |
-| Version tag such as `v0.2.2` | Checks, tests, build and a draft GitHub Release |
+| Version tag such as `v0.2.3` | Checks, tests, build and a draft GitHub Release |
 | Maintainer publishes the draft | AppImage and checksum become release downloads |
 
 To prepare a release:
 
-1. Set the version in `pyproject.toml`, for example `0.2.2`, and update the documented run
+1. Set the version in `pyproject.toml`, for example `0.2.3`, and update the documented run
    commands. The interface and HTTP User-Agent read the installed package version.
    Reinstall an editable development checkout after a version change. Commit the changes.
 2. Push that commit to the GitHub repository.
 3. Create and push the matching tag:
 
    ```sh
-   git tag v0.2.2
-   git push origin v0.2.2
+   git tag v0.2.3
+   git push origin v0.2.3
    ```
 
 The tag must exactly match `v` plus the project version; a mismatch stops the build.

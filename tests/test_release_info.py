@@ -46,6 +46,28 @@ class ReleaseInfoTests(unittest.TestCase):
         self.assertFalse(info.preview.release.is_latest)
         self.assertEqual(cached_info(APP, self.cache), info)
 
+    def test_prefixed_short_versions_keep_channel_ordering_and_cache(self):
+        self.stable = {**metadata("0.6"), "is_latest": True}
+        self.beta = metadata("0.7-beta.10", True)
+        for data in (self.stable, self.beta):
+            old_tag = data["tag_name"]
+            data["tag_name"] = "studio-" + old_tag
+            for asset in data["assets"]:
+                asset["browser_download_url"] = asset["browser_download_url"].replace(
+                    old_tag, data["tag_name"]
+                )
+        self.entries = [self.beta, self.stable, metadata("0.7-beta.2", True)]
+        info = self.discover()
+        self.assertEqual(info.choice(False).version, "0.6")
+        self.assertEqual(info.choice(True).version, "0.7-beta.10")
+        self.assertEqual(cached_info(APP, self.cache), info)
+        self.assertEqual(releases.cached_release(APP, self.cache), info.stable.release)
+
+    def test_unsupported_tags_keep_the_actionable_discovery_error(self):
+        self.entries = [{**self.stable, "tag_name": "nightly"}]
+        with self.assertRaisesRegex(ValueError, "AppImage.*version tag"):
+            self.discover()
+
     def test_stable_replaces_preview_and_designated_latest_is_preserved(self):
         self.entries.append({**metadata("1.4.0"), "is_latest": False})
         info = self.discover()

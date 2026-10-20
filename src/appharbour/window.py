@@ -55,7 +55,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from appharbour import APP_ICON, APP_NAME, APP_VERSION
+from appharbour import APP_ICON, APP_NAME, APP_VERSION, github_status
 from appharbour.catalog import APPS, App
 from appharbour.icons import icon_pixmap
 from appharbour.jobs import Task, TaskResult
@@ -67,7 +67,9 @@ from appharbour.releases import (
     Release,
     cached_release,
     check_cancel,
+    github_request_status,
     latest_release,
+    restore_rate_limits,
     variant_label,
     version_key,
 )
@@ -559,6 +561,28 @@ class SettingsDialog(QDialog):
         self.repositories_button.clicked.connect(self.repositories_requested.emit)
         application_layout.addWidget(self.repositories_button)
         applications_page.addWidget(applications)
+        github = QGroupBox("GitHub requests")
+        github_layout = QVBoxLayout(github)
+        self.github_details = QLabel()
+        self.github_details.setTextFormat(Qt.TextFormat.PlainText)
+        self.github_details.setWordWrap(True)
+        self.github_details.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum)
+        self.github_details.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.github_details.setAccessibleName("GitHub request status")
+        github_layout.addWidget(self.github_details)
+        github_note = QLabel(
+            "Status updates from existing requests; opening Settings makes no requests. "
+            "Other applications on your network may share the request allowance."
+        )
+        github_note.setObjectName("muted")
+        github_note.setWordWrap(True)
+        github_layout.addWidget(github_note)
+        applications_page.addWidget(github)
+        self.github_timer = QTimer(self)
+        self.github_timer.timeout.connect(self.update_github_status)
+        self.finished.connect(self.github_timer.stop)
+        self.github_timer.start(1000)
+        self.update_github_status()
         app_title = QLabel(f"{APP_NAME} {APP_VERSION}")
         app_title.setObjectName("sectionTitle")
         about.addWidget(app_title)
@@ -584,6 +608,9 @@ class SettingsDialog(QDialog):
         buttons.rejected.connect(self.reject)
         buttons.button(QDialogButtonBox.StandardButton.Save).setObjectName("primary")
         layout.addWidget(buttons)
+
+    def update_github_status(self) -> None:
+        self.github_details.setText(github_request_status()[1])
 
     def browse(self) -> None:
         folder = QFileDialog.getExistingDirectory(
@@ -732,6 +759,12 @@ class LauncherWindow(QMainWindow):
         self.cancel_button.clicked.connect(self.cancel_task)
         self.cancel_button.hide()
         progress_row.addWidget(self.cancel_button)
+        self.github_button = QPushButton()
+        self.github_button.setObjectName("githubStatus")
+        self.github_button.setAccessibleName("GitHub request status")
+        self.github_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.github_button.clicked.connect(lambda: self.open_settings(1))
+        progress_row.addWidget(self.github_button)
         progress_row.addWidget(self.version_button)
         layout.addLayout(progress_row)
         self.cards = {app.id: self.create_card(app) for app in self.apps}
@@ -753,7 +786,21 @@ class LauncherWindow(QMainWindow):
         if QSystemTrayIcon.isSystemTrayAvailable():
             self.tray.show()
         self.apply_theme()
+        restore_rate_limits(self.library.data_dir / "release-cache")
+        self.github_timer = QTimer(self)
+        self.github_timer.timeout.connect(self.update_github_status)
+        self.github_timer.start(1000)
+        self.update_github_status()
         self.scan_installed()
+
+    def update_github_status(self) -> None:
+        label, details, limited = github_request_status()
+        self.github_button.setText(label)
+        self.github_button.setToolTip(details + "\nClick for details in Settings → Applications.")
+        if self.github_button.property("limited") != limited:
+            self.github_button.setProperty("limited", limited)
+            self.github_button.style().unpolish(self.github_button)
+            self.github_button.style().polish(self.github_button)
 
     def create_card(self, app: App) -> AppCard:
         card = AppCard(app, self.library.icon_path(app))
@@ -897,10 +944,7 @@ class LauncherWindow(QMainWindow):
 
             dialog.check_button.setEnabled(False)
             dialog.check_button.setText("Checking…")
-            self.start_task(f"Checking releases for {app.name}…", operation)
-            if self.task is not None:
-                self.task.signals.finished.connect(dialog.release_check_finished)
-                self.task.signals.failed.connect(dialog.release_check_failed)
+            self.start_task(f"Checking releases for {app.name}…", operation, details=dialog)
 
         dialog.check_requested.connect(check_releases)
         dialog.exec()
@@ -997,6 +1041,7 @@ class LauncherWindow(QMainWindow):
                     or info.checked_at > self.release_infos[app.id].checked_at
                 ):
                     self.release_infos[app.id] = info
+                    github_status.release_result("Cached information", app.repo, info.checked_at)
                 if app.id in self.release_infos:
                     self.apply_release_info(app)
                 else:
@@ -1034,10 +1079,19 @@ class LauncherWindow(QMainWindow):
 
         QTimer.singleShot(1800, self, check_startup)
 
-    def start_task(self, message: str, operation: Callable[[Event, Progress], TaskResult]) -> None:
+    def start_task(
+        self,
+        message: str,
+        operation: Callable[[Event, Progress], TaskResult],
+        *,
+        details: DetailsDialog | None = None,
+    ) -> None:
         if self.task is not None:
             return
         self.task = Task(operation)
+        if details is not None:
+            self.task.signals.finished.connect(details.release_check_finished)
+            self.task.signals.failed.connect(details.release_check_failed)
         self.task.signals.progress.connect(self.task_progress)
         self.task.signals.finished.connect(self.task_finished)
         self.task.signals.failed.connect(self.task_failed)
@@ -1419,10 +1473,14 @@ class LauncherWindow(QMainWindow):
                 border-color: {"#3c8159" if dark else "#89bd9b"}; }}
             QLabel#releaseBadge[release="prerelease"] {{ color: {"#f0c46e" if dark else "#895b00"};
                 border-color: {"#96753b" if dark else "#c7a660"}; }}
-            QPushButton#versionButton {{ background: transparent; border: 1px solid transparent;
+            QPushButton#versionButton, QPushButton#githubStatus {{
+                background: transparent; border: 1px solid transparent;
                 color: {muted}; font-size: 12px; padding: 5px 10px; }}
-            QPushButton#versionButton:hover, QPushButton#versionButton:focus {{
+            QPushButton#versionButton:hover, QPushButton#versionButton:focus,
+            QPushButton#githubStatus:hover, QPushButton#githubStatus:focus {{
                 background: {surface}; border-color: {accent}; color: {accent}; }}
+            QPushButton#githubStatus[limited="true"] {{
+                color: {"#ffd079" if dark else "#845300"}; }}
             QListWidget#settingsSections {{ border: none; background: transparent; outline: 0; }}
             QListWidget#settingsSections::item {{ padding: 12px; border-radius: 7px; }}
             QListWidget#settingsSections::item:selected {{

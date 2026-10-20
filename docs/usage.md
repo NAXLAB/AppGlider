@@ -32,6 +32,22 @@ makes no release requests and the main and tray refresh actions are disabled.
 the application's own settings are preserved. An application cannot be uninstalled while
 its managed version is running.
 
+## GitHub request status
+
+The **GitHub** indicator beside the version button opens **Settings → Applications**.
+It shows the last reported API request allowance, active retry countdowns and the most
+recent successful release result, including its repository, source and check time.
+Sources distinguish the GitHub API, public GitHub pages used during API rate limiting,
+and cached information. The indicator highlights active request limits.
+
+Opening the panel makes no network requests. Counts come from existing GitHub responses
+and may also be affected by other applications sharing your network. After a request
+window expires, its count becomes unknown until the next API response; AppHarbour does
+not assume the full allowance is available. Cached results keep their original check
+time. Failed checks keep the last successful result visible and report the failure
+through the usual operation message. Saved retry times survive restarts; request counts
+are observed again during the next normal API request.
+
 Checks run on startup or when requested; there are no scheduled periodic checks.
 AppHarbour itself is upgraded by replacing its AppImage and
 launching the replacement; it does not currently update itself.
@@ -103,8 +119,11 @@ Discovery examines a bounded set of likely repository files, so some projects ne
 manual choice. An unavailable icon or GitHub quota error does not prevent adding a valid
 application; AppHarbour's icon is the fallback. Embedded AppImage icons are not extracted.
 
-Supported release tags include `v1.2.3`, `1.2.3`, `v1.2.3-beta.1` and four-part versions
-such as Bambu Studio's `v02.08.02.61`. Numeric components are compared numerically;
+Supported release tags include `v1.2.3`, `1.2.3`, `v1.2.3-beta.1`, short versions such as
+`v0.6`, and four-part versions such as Bambu Studio's `v02.08.02.61`. Project prefixes
+such as `studio-v0.6.0`, `release-1.2.3` and `app/v1.2.3` are supported. The original tag
+is kept in download URLs; only its numeric version is used for comparisons. Missing
+patch components compare as zero (`0.6` equals `0.6.0`). Numeric components are compared numerically;
 GitHub's release flags determine whether a release is stable or a preview. AppHarbour inspects
 the release's actual assets for filenames ending in `.AppImage`, ignoring letter case. The repository
 name, version placement, separators and word `linux` are not required. Companion files

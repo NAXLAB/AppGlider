@@ -12,6 +12,7 @@ from pathlib import Path
 from threading import Event
 from unittest.mock import patch
 from urllib.error import HTTPError
+from urllib.parse import quote
 
 from test_library import APP, appimage_bytes, release_for
 
@@ -53,9 +54,10 @@ class ReleaseTests(unittest.TestCase):
         self.addCleanup(cooldown.stop)
 
     def assert_release_paths(self, app, data, release, arch):
+        tag = quote(data["tag_name"], safe="")
         fallback = replace(
             release,
-            url=f"{app.source_url}/releases/download/{data['tag_name']}/{release.name}",
+            url=f"{app.source_url}/releases/download/{tag}/{release.name}",
         )
         with patch.object(releases, "architecture", return_value=arch):
             self.assertEqual(releases.select_release(app, data, arch), release)
@@ -79,6 +81,88 @@ class ReleaseTests(unittest.TestCase):
                 {"checked_at": time.time(), "release": asdict(release)},
             )
             self.assertEqual(releases.cached_release(app, self.cache), release)
+
+    def test_tag_versions_accept_unambiguous_prefixes_and_short_versions(self):
+        for tag, version in (
+            ("studio-v0.6.0", "0.6.0"),
+            ("release-1.2.3", "1.2.3"),
+            ("app/v1.2.3-beta.10+build.4", "1.2.3-beta.10+build.4"),
+            ("v0.6", "0.6"),
+            ("V1.2.3", "1.2.3"),
+            ("v02.08.02.61", "02.08.02.61"),
+        ):
+            with self.subTest(tag=tag):
+                self.assertEqual(releases.release_version(tag), version)
+        for tag in (
+            None,
+            123,
+            "nightly",
+            "v1",
+            "1.2.3.4.5",
+            "1.2.3/v2.3.4",
+            "v1.2.3 trailing",
+            "../v1.2.3",
+            "v1.2.3\n",
+            "v1.2.3-../../bad",
+            "x" * 129 + "-v1.2.3",
+        ):
+            with self.subTest(tag=tag):
+                self.assertIsNone(releases.release_version(tag))
+        self.assertEqual(releases.version_key("0.6"), releases.version_key("0.6.0"))
+        self.assertGreater(releases.version_key("0.10"), releases.version_key("0.9.9"))
+
+    def test_cadcraft_prefixed_and_short_tags_agree_across_discovery_paths(self):
+        app = custom_app("getcadcraft/studio")
+        name = "CadCraft-Studio-0.6-x86_64.AppImage"
+        sha256 = "0730125c546d3764e4171c445e6f163f6642116f2b2978e7943f232f34d5e12a"
+        for tag, version in (
+            ("studio-v0.6.0", "0.6.0"),
+            ("studio-v0.6", "0.6"),
+            ("studio/v0.6.0", "0.6.0"),
+        ):
+            with self.subTest(tag=tag):
+                url = f"{app.source_url}/releases/download/{quote(tag, safe='')}/{name}"
+                release = releases.Release(version, name, url, 106793464, sha256)
+                data = {
+                    "tag_name": tag,
+                    "assets": [
+                        {
+                            "name": name,
+                            "browser_download_url": url,
+                            "size": release.size,
+                            "digest": "sha256:" + sha256,
+                        }
+                    ],
+                }
+                self.assert_release_paths(app, data, release, "x86_64")
+                without_digest = replace(release, sha256="")
+                with patch.object(
+                    releases, "read_metadata", return_value=f"{sha256} *{name}".encode()
+                ) as read:
+                    self.assertEqual(
+                        releases.with_checksum(app, tag, without_digest, Event()), release
+                    )
+                    read.assert_called_once_with(
+                        f"{app.source_url}/releases/download/{quote(tag, safe='')}/SHA256SUMS.txt"
+                    )
+                data["assets"][0]["browser_download_url"] = url.replace(
+                    quote(tag, safe=""), version
+                )
+                with self.assertRaisesRegex(ValueError, "repository"):
+                    releases.select_release(app, data, "x86_64")
+
+    def test_unsupported_tags_report_an_appimage_separately_from_no_releases(self):
+        data = {"tag_name": "nightly", "assets": [{"name": "Tool.AppImage"}]}
+        with self.assertRaisesRegex(ValueError, "AppImage.*version tag"):
+            releases.newest_release([data], False)
+        with self.assertRaisesRegex(ValueError, "No published release"):
+            releases.newest_release([], False)
+        for assets in (None, "Tool.AppImage", [None, {"name": "Tool.AppImage.asc"}]):
+            with (
+                self.subTest(assets=assets),
+                self.assertRaisesRegex(ValueError, "Published releases.*version tag"),
+            ):
+                releases.newest_release([{**data, "assets": assets}], False)
 
     def test_limit_headers_trigger_cooldown_without_repeated_requests(self):
         headers = Message()

@@ -1,7 +1,7 @@
 # Roadmap
 
-Planned improvements for AppHarbour. These items are not implemented and have no
-promised release dates or fixed implementation order. Designs may change after discussion.
+Planned improvements for AppHarbour have no promised release dates or fixed implementation
+order. Designs may change after discussion.
 
 ## Planned
 
@@ -10,14 +10,18 @@ promised release dates or fixed implementation order. Designs may change after d
   is a ZIP containing a versioned JSON manifest and PNG icons. Preview imports and merge
   with the existing library; AppImages, documents and machine-specific paths stay outside
   the profile.
-- **GitHub request status:** show request limits, retry times and when cached release
-  information is being used.
 - **Installation queue:** queue multiple installs or updates with clear progress and
   cancellation controls.
 - **AppHarbour updates:** check for launcher updates, show release notes and offer an
   explicit update action.
 - **Storage overview:** show space used by managed applications and their retained
   rollback versions, with controls for removing an unwanted rollback copy.
+
+## Completed
+
+- **GitHub request status:** a footer indicator and details in Settings show the last
+  reported API allowance, retry times, the most recent release-information source and
+  when that information was checked. Opening the status panel makes no requests.
 
 ## Library customisation — design discussion
 

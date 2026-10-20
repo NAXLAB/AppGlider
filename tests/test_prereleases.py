@@ -233,6 +233,23 @@ class PrereleaseTests(unittest.TestCase):
         self.assertEqual(self.library.scan(), {})
         self.assertFalse(self.library.apps_dir.exists())
 
+    def test_prefixed_short_versions_install_reopen_update_and_roll_back(self):
+        for version in ("0.6", "0.7"):
+            data = metadata(version)
+            data["tag_name"] = "studio-v" + version
+            data["assets"][0]["browser_download_url"] = data["assets"][0][
+                "browser_download_url"
+            ].replace("/v" + version + "/", "/studio-v" + version + "/")
+            release = self.api(APP, data, [])
+            with patch.object(releases, "request", return_value=io.BytesIO(appimage_bytes())):
+                self.library.install(APP, release, Event(), ignore_progress)
+            reopened = Library(
+                self.library.data_dir, self.library.apps_dir, self.library.desktop_dir
+            )
+            self.assertEqual(reopened.scan()[APP.id].version, version)
+        self.library.rollback(APP)
+        self.assertEqual(self.library.scan()[APP.id].version, "0.6")
+
     def test_channel_caches_are_separate_and_legacy_stable_cache_still_reads(self):
         cache = self.root / "cache"
         stable = self.api(APP, metadata("1.2.3"), [])

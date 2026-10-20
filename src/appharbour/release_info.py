@@ -9,7 +9,7 @@ from pathlib import Path
 from threading import Event
 from typing import Any
 
-from appharbour import releases
+from appharbour import github_status, releases
 from appharbour.catalog import App
 from appharbour.releases import Release
 from appharbour.storage import atomic_json
@@ -126,6 +126,7 @@ def inspect_entries(
     app: App, entries: list[Any], cancel: Event, *, public: bool = False
 ) -> ReleaseInfo:
     options: list[ReleaseOption | None] = []
+    version_errors: list[ValueError] = []
     for channel in ("stable", "preview", "newer_stable"):
         prerelease = channel == "preview"
         candidates = [
@@ -143,10 +144,12 @@ def inspect_entries(
             continue
         try:
             data = releases.newest_release(candidates, True)
-        except ValueError:
+        except ValueError as error:
+            version_errors.append(error)
             options.append(None)
             continue
-        version = str(data["tag_name"]).removeprefix("v")
+        version = releases.release_version(data["tag_name"])
+        assert version is not None  # newest_release only returns recognised versions.
         if channel == "newer_stable" and (
             options[0] is None
             or releases.version_key(version) <= releases.version_key(options[0].version)
@@ -169,6 +172,8 @@ def inspect_entries(
         else:
             options.append(ReleaseOption(version, release))
     if not any(options):
+        if version_errors:
+            raise version_errors[0]
         raise ValueError("No published release with a supported version was found.")
     return ReleaseInfo(options[0], options[1], time.time(), options[2], app.build_variant)
 
@@ -179,15 +184,18 @@ def discover_releases(
     releases.check_cancel(cancel)
     cached = cached_info(app, cache_dir)
     if not force and cached and cached.fresh():
+        github_status.release_result("Cached information", app.repo, cached.checked_at)
         return cached
     releases.restore_rate_limits(cache_dir)
     app = replace(app, include_prereleases=True)
     try:
         info = inspect_entries(app, releases.api_entries(app, cancel), cancel)
+        github_status.release_result("GitHub API", app.repo, info.checked_at)
     except releases.RateLimited:
         with contextlib.suppress(OSError):
             atomic_json(cache_dir / "limits.json", releases._RETRY_AFTER)
         info = inspect_entries(app, releases.page_entries(app, cancel), cancel, public=True)
+        github_status.release_result("Public GitHub pages", app.repo, info.checked_at)
     releases.check_cancel(cancel)
     with contextlib.suppress(OSError):
         atomic_json(info_path(app, cache_dir), asdict(info))
