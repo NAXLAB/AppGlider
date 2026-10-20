@@ -124,7 +124,7 @@ def request(url: str, *, method: str = "GET") -> Any:
     host = urlsplit(url).netloc
     if _RETRY_AFTER.get(host, 0) > time.time():
         raise RateLimited(host, _RETRY_AFTER[host])
-    req = Request(url, headers={"User-Agent": "AppHarbour/0.1.2"}, method=method)
+    req = Request(url, headers={"User-Agent": "AppHarbour/0.1.3"}, method=method)
     try:
         return build_opener(GitHubRedirect()).open(req, timeout=20)
     except HTTPError as error:

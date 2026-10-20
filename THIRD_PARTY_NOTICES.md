@@ -26,7 +26,7 @@ including reverse engineering to debug those modifications, under the applicable
 To use replacement libraries, extract the AppImage into a writable directory:
 
 ```sh
-./AppHarbour-0.1.2-linux-x86_64.AppImage --appimage-extract
+./AppHarbour-0.1.3-linux-x86_64.AppImage --appimage-extract
 ./squashfs-root/AppRun
 ```
 

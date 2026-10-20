@@ -58,7 +58,7 @@ The version comes from `pyproject.toml`.
 Test the package without FUSE, using a disposable first-run home:
 
 ```sh
-python3 packaging/smoke_test.py dist/AppHarbour-0.1.2-linux-x86_64.AppImage
+python3 packaging/smoke_test.py dist/AppHarbour-0.1.3-linux-x86_64.AppImage
 ```
 
 Verify its checksum from inside `dist/` with `sha256sum -c SHA256SUMS.txt`.
