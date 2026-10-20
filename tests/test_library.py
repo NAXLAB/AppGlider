@@ -103,6 +103,37 @@ class LibraryTests(unittest.TestCase):
                 check_appimage(location)
         self.assertFalse((self.root / "data" / "library.json").exists())
 
+    def test_unlabelled_appimage_with_wrong_cpu_cannot_replace_installed_version(self) -> None:
+        current = self.install("1.0.0")
+        records = (self.library.data_dir / "library.json").read_bytes()
+        payload = bytearray(appimage_bytes())
+        payload[18:20] = (183 if architecture() == "x86_64" else 62).to_bytes(2, "little")
+        content = bytes(payload)
+        name = "Desktop.AppImage"
+        release = select_release(
+            APP,
+            {
+                "tag_name": "v1.1.0",
+                "assets": [
+                    {
+                        "name": name,
+                        "browser_download_url": f"{APP.source_url}/releases/download/v1.1.0/{name}",
+                        "size": len(content),
+                        "digest": "sha256:" + hashlib.sha256(content).hexdigest(),
+                    }
+                ],
+            },
+            architecture(),
+        )
+        with (
+            patch("appharbour.releases.request", return_value=io.BytesIO(content)),
+            self.assertRaisesRegex(ValueError, "different CPU architecture"),
+        ):
+            self.library.install(APP, release, Event(), ignore_progress)
+        self.assertEqual((self.library.data_dir / "library.json").read_bytes(), records)
+        self.assertEqual(self.library.scan()[APP.id], current)
+        self.assertFalse((current.path.parent.parent / "1.1.0" / name).exists())
+
     def test_install_update_rollback_forward_and_remove_keep_user_files(self) -> None:
         first = self.install("1.0.0")
         second = self.install("1.1.0")

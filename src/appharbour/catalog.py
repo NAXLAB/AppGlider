@@ -76,7 +76,6 @@ def custom_app(repository: str, name: str | None = None) -> App:
     title = name.strip() if name is not None else slug.replace("-", " ").replace("_", " ").title()
     if not title or len(title) > 128 or any(ord(c) < 32 or ord(c) == 127 for c in title):
         raise ValueError("Use an application name of 1–128 characters, without control characters.")
-    # shortcut: match repository-based AppImage names until other release layouts are needed.
     return App(
         f"github-{owner}__{slug}", title, f"AppImage from {owner}/{slug}", f"{owner}/{slug}", slug
     )

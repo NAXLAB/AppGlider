@@ -46,25 +46,28 @@ Discovery examines a bounded set of likely repository files, so some projects ne
 manual choice. An unavailable icon or GitHub quota error does not prevent adding a valid
 application; AppHarbour's icon is the fallback. Embedded AppImage icons are not extracted.
 
-Supported release tags are `v1.2.3` or `1.2.3`. Supported filenames are:
+Supported stable release tags are `v1.2.3` or `1.2.3`. AppHarbour inspects the release's
+actual assets for filenames ending in `.AppImage`, ignoring letter case. The repository
+name, version placement, separators and word `linux` are not required. Companion files
+such as `.AppImage.zsync` and `.AppImage.asc` are excluded.
 
-```text
-<repository>-<version>-linux-<architecture>.AppImage
-<repository>-linux-<architecture>.AppImage
-<repository>-<version>-<architecture>.AppImage
-<repository>-<architecture>.AppImage
-```
+Architecture labels are matched to the host: `x86_64`, `x86-64`, `x64` and `amd64`
+identify x86_64; `aarch64` and `arm64` identify ARM64. An explicit match takes priority
+over an unlabelled AppImage. A single unlabelled candidate is allowed; installation
+checks the actual file's CPU architecture and AppImage header before activating it.
+The AppHarbour launcher package currently targets Linux x86_64 only.
 
-Filename matching ignores letter case, while downloads use the exact published filename.
-
-Architectures are `x86_64` (also `x64` or `amd64`) and `aarch64` (also `arm64`),
-matched to the host. This describes managed application downloads; the AppHarbour
-launcher package currently targets x86_64 only.
-Other release naming conventions are not supported yet.
+When several candidates fit, familiar repository-based filenames retain their existing
+preference. If that does not identify one file, inspection or update checking reports
+the ambiguous filenames and stops. There is no manual asset picker yet.
 
 A published SHA-256 checksum is required. GitHub's asset digest is used when available;
-otherwise the release must provide `SHA256SUMS.txt`. When GitHub's API quota is exhausted,
-the public-download fallback also requires that file. No GitHub token is needed.
+otherwise the release must provide a matching entry in `SHA256SUMS.txt`. When GitHub's
+API quota is exhausted, the public-download fallback reads the actual asset links and
+filename-labelled digests from GitHub's public release listing, using the same selection
+rules. A separate checksum file is unnecessary when GitHub publishes the digest.
+If GitHub changes the page format or no checksum can be obtained, discovery stops with
+an explanation. No GitHub token is needed.
 
 ## Settings and desktop integration
 

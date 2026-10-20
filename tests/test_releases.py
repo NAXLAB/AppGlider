@@ -7,6 +7,7 @@ import time
 import unittest
 from dataclasses import asdict, replace
 from email.message import Message
+from html import escape
 from pathlib import Path
 from threading import Event
 from unittest.mock import patch
@@ -27,6 +28,17 @@ class Response(io.BytesIO):
 
     def geturl(self):
         return self.url
+
+
+def public_assets(release, digest=True):
+    html = f'<li><a href="{escape(release.url, quote=True)}">{escape(release.name)}</a>'
+    if digest:
+        name = escape(release.name, quote=True)
+        html += (
+            f'<clipboard-copy aria-label="Copy to clipboard digest for {name}" '
+            f'value="sha256:{release.sha256}"></clipboard-copy>'
+        )
+    return (html + "</li>").encode()
 
 
 class ReleaseTests(unittest.TestCase):
@@ -98,7 +110,9 @@ class ReleaseTests(unittest.TestCase):
         sums = f"{self.release.sha256} *{self.release.name}\n".encode()
         with (
             patch.object(releases, "request") as request,
-            patch.object(releases, "read_metadata", return_value=sums) as metadata,
+            patch.object(
+                releases, "read_metadata", side_effect=[public_assets(self.release, False), sums]
+            ) as metadata,
         ):
             request.side_effect = [
                 Response(tag_url),
@@ -106,7 +120,8 @@ class ReleaseTests(unittest.TestCase):
             ]
             self.assertEqual(releases.page_release(APP, Event()), self.release)
             request.assert_any_call(self.release.url, method="HEAD")
-            metadata.assert_called_once_with(self.release.url.rsplit("/", 1)[0] + "/SHA256SUMS.txt")
+            self.assertEqual(metadata.call_count, 2)
+            metadata.assert_called_with(self.release.url.rsplit("/", 1)[0] + "/SHA256SUMS.txt")
 
     def test_appimage_names_without_linux_work_for_api_fallback_and_cache(self):
         arch = releases.architecture()
@@ -136,7 +151,7 @@ class ReleaseTests(unittest.TestCase):
                     patch.object(
                         releases,
                         "read_metadata",
-                        return_value=f"{release.sha256} {name}\n".encode(),
+                        return_value=public_assets(release),
                     ),
                 ):
                     request.side_effect = [
@@ -174,7 +189,7 @@ class ReleaseTests(unittest.TestCase):
             patch.object(
                 releases,
                 "read_metadata",
-                return_value=f"{release.sha256} {name}\n".encode(),
+                return_value=public_assets(replace(release, url=fallback_url)),
             ),
         ):
             request.side_effect = [
@@ -225,7 +240,7 @@ class ReleaseTests(unittest.TestCase):
                     patch.object(
                         releases,
                         "read_metadata",
-                        return_value=f"{release.sha256} {name}\n".encode(),
+                        return_value=public_assets(release),
                     ),
                 ):
                     request.side_effect = [
@@ -260,12 +275,14 @@ class ReleaseTests(unittest.TestCase):
 
     def test_public_fallback_rejects_wrong_repository_missing_checksum_or_size(self):
         tag_url = f"https://github.com/{APP.repo}/releases/tag/v{self.release.version}"
-        sums = f"{self.release.sha256} {self.release.name}\n".encode()
+        sums = public_assets(self.release)
         cases = (
             ("https://github.com/someone/else/releases/tag/v1.2.3", sums, "1"),
             (tag_url, b"", "1"),
             (tag_url, sums, ""),
             (tag_url, sums, "0"),
+            (tag_url, sums, "not a number"),
+            (tag_url, sums, "1" * 13),
             (tag_url, sums, str(releases.MAX_DOWNLOAD + 1)),
         )
         for location, manifest, length in cases:

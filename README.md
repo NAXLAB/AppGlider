@@ -50,7 +50,8 @@ Applications downloaded through AppHarbour may have their own runtime requiremen
 3. Choose **Inspect repository**, review the release, then **Add to library**.
 4. Use **Install** on its new card.
 
-Repositories need a supported stable release, AppImage filename and published checksum.
+Repositories need a supported stable release and an AppImage with a published checksum.
+AppImage filenames can use different branding and layouts; downloads are matched to your CPU.
 See the [usage guide](docs/usage.md) for supported names, updates and desktop integration.
 
 ## Development

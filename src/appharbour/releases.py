@@ -8,13 +8,14 @@ import platform
 import re
 import time
 from collections.abc import Callable, Iterator
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
+from html.parser import HTMLParser
 from http.client import HTTPMessage
 from pathlib import Path
 from threading import Event
 from typing import IO, Any
 from urllib.error import HTTPError
-from urllib.parse import quote, unquote, urlsplit
+from urllib.parse import quote, unquote, urljoin, urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from appharbour.catalog import App
@@ -27,10 +28,30 @@ MAX_METADATA = 4 * 1024 * 1024
 MAX_DOWNLOAD = 4 * 1024 * 1024 * 1024
 VERSION = r"\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)?"
 Progress = Callable[[str, int, int], None]
+ASSET_ARCHITECTURES = {
+    "x86_64": ("x86_64", "x86-64", "x64", "amd64"),
+    "aarch64": ("aarch64", "arm64"),
+    "x86": ("x86", "i386", "i486", "i586", "i686", "ia32"),
+    "arm": ("arm", "armhf", "armel", "armv6l", "armv7", "armv7l", "armv7hf"),
+    "riscv64": ("riscv64",),
+    "ppc64": ("ppc64", "ppc64le"),
+    "s390x": ("s390x",),
+}
+ARCH_LABELS = {alias: arch for arch, aliases in ASSET_ARCHITECTURES.items() for alias in aliases}
+ARCH_PATTERN = re.compile(
+    r"(?<![a-z0-9])("
+    + "|".join(map(re.escape, sorted(ARCH_LABELS, key=len, reverse=True)))
+    + r")(?![a-z0-9])",
+    re.I,
+)
 
 
 class Cancelled(Exception):
     """The user cancelled an operation before activation."""
+
+
+class MissingResource(ValueError):
+    """A GitHub resource returned HTTP 404."""
 
 
 def check_cancel(cancel: Event) -> None:
@@ -130,7 +151,7 @@ def request(url: str, *, method: str = "GET") -> Any:
             raise ValueError("GitHub denied access to this resource (HTTP 403).") from error
         if error.code == 404:
             error.close()
-            raise ValueError("No published release was found in this repository.") from error
+            raise MissingResource("No published release was found in this repository.") from error
         raise
 
 
@@ -156,14 +177,43 @@ class Release:
         )
 
 
-def asset_names(app: App, version: str, arch: str) -> Iterator[str]:
-    aliases = {"x86_64": ("x86_64", "x64", "amd64"), "aarch64": ("aarch64", "arm64")}
+def preferred_asset_names(app: App, version: str, arch: str) -> Iterator[str]:
     for stem in stems(app):
-        for filename_arch in aliases.get(arch, (arch,)):
+        for filename_arch in ASSET_ARCHITECTURES.get(arch, (arch,)):
             yield f"{stem}-{version}-linux-{filename_arch}.AppImage"
             yield f"{stem}-linux-{filename_arch}.AppImage"
             yield f"{stem}-{version}-{filename_arch}.AppImage"
             yield f"{stem}-{filename_arch}.AppImage"
+
+
+def select_asset(app: App, assets: list[Any], version: str, arch: str) -> dict[str, Any]:
+    labelled = []
+    unlabelled = []
+    for asset in assets:
+        if not isinstance(asset, dict):
+            continue
+        name = asset.get("name")
+        if not isinstance(name, str) or not name.casefold().endswith(".appimage"):
+            continue
+        if len(name) > 512 or any(ord(c) < 32 or ord(c) == 127 or c in "/\\" for c in name):
+            raise ValueError("The release has an invalid AppImage filename.")
+        architectures = {ARCH_LABELS[m[0].lower()] for m in ARCH_PATTERN.finditer(name)}
+        if architectures == {arch}:
+            labelled.append(asset)
+        elif not architectures:
+            unlabelled.append(asset)
+    candidates = labelled or unlabelled
+    if not candidates:
+        raise ValueError(f"No supported {arch} AppImage filename was found in this release.")
+    for expected in preferred_asset_names(app, version, arch):
+        preferred = [a for a in candidates if a["name"].casefold() == expected.casefold()]
+        if preferred:
+            candidates = preferred
+            break
+    if len(candidates) != 1:
+        names = ", ".join(a["name"] for a in candidates[:5])
+        raise ValueError(f"Multiple AppImages match {arch}; cannot choose safely: {names}")
+    return candidates[0]
 
 
 def select_release(app: App, data: object, arch: str) -> Release:
@@ -176,40 +226,27 @@ def select_release(app: App, data: object, arch: str) -> Release:
     assets = data.get("assets")
     if not isinstance(assets, list):
         raise ValueError("This release has no downloadable files.")
-    for expected in asset_names(app, version, arch):
-        asset = next(
-            (
-                a
-                for a in assets
-                if isinstance(a, dict)
-                and isinstance(a.get("name"), str)
-                and a["name"].casefold() == expected.casefold()
-            ),
-            None,
-        )
-        if asset is None:
-            continue
-        name = asset["name"]
-        url = asset.get("browser_download_url")
-        prefix = f"https://github.com/{app.repo}/releases/download/"
-        if (
-            not isinstance(url, str)
-            or not url.lower().startswith(prefix.lower())
-            or url[len(prefix) :] != f"{quote(tag, safe='')}/{name}"
-        ):
-            raise ValueError("The release's AppImage URL does not match its repository.")
-        size = asset.get("size")
-        if type(size) is not int or not 0 < size <= MAX_DOWNLOAD:
-            raise ValueError("The AppImage has an invalid download size.")
-        digest = asset.get("digest", "")
-        sha256 = digest[7:] if isinstance(digest, str) and digest.startswith("sha256:") else ""
-        if not re.fullmatch(r"[a-fA-F0-9]{64}", sha256):
-            sha256 = ""
-        return Release(version, name, url, size, sha256.lower())
-    example = f"{stems(app)[0]}-{version}-{arch}.AppImage"
-    raise ValueError(
-        f"No supported {arch} AppImage filename was found. Expected a name like {example}."
-    )
+    asset = select_asset(app, assets, version, arch)
+    name = asset["name"]
+    url = asset.get("browser_download_url")
+    prefix = f"https://github.com/{app.repo}/releases/download/"
+    if (
+        not isinstance(url, str)
+        or not url.lower().startswith(prefix.lower())
+        or unquote(url[len(prefix) :]) != f"{tag}/{name}"
+        or urlsplit(url).query
+        or urlsplit(url).fragment
+        or any(c.isspace() for c in url)
+    ):
+        raise ValueError("The release's AppImage URL does not match its repository.")
+    size = asset.get("size")
+    if type(size) is not int or not 0 < size <= MAX_DOWNLOAD:
+        raise ValueError("The AppImage has an invalid download size.")
+    digest = asset.get("digest", "")
+    sha256 = digest[7:] if isinstance(digest, str) and digest.startswith("sha256:") else ""
+    if not re.fullmatch(r"[a-fA-F0-9]{64}", sha256):
+        sha256 = ""
+    return Release(version, name, url, size, sha256.lower())
 
 
 def checksums(text: str) -> dict[str, str]:
@@ -225,19 +262,58 @@ def checksums(text: str) -> dict[str, str]:
     return result
 
 
+def with_checksum(app: App, tag: str, release: Release, cancel: Event) -> Release:
+    if release.sha256:
+        return release
+    url = f"https://github.com/{app.repo}/releases/download/{quote(tag, safe='')}/SHA256SUMS.txt"
+    check_cancel(cancel)
+    try:
+        manifest = read_metadata(url).decode("utf-8")
+    except MissingResource as error:
+        raise ValueError(
+            "No GitHub SHA-256 digest or SHA256SUMS.txt is available for this AppImage."
+        ) from error
+    digest = checksums(manifest).get(release.name)
+    if digest is None:
+        raise ValueError("No published SHA-256 checksum was found for this AppImage.")
+    return replace(release, sha256=digest)
+
+
 def api_release(app: App, cancel: Event) -> Release:
     check_cancel(cancel)
     data = json.loads(read_metadata(f"https://api.github.com/repos/{app.repo}/releases/latest"))
     release = select_release(app, data, architecture())
-    if release.sha256:
-        return release
-    tag = str(data["tag_name"])
-    url = f"https://github.com/{app.repo}/releases/download/{quote(tag, safe='')}/SHA256SUMS.txt"
-    check_cancel(cancel)
-    digest = checksums(read_metadata(url).decode("utf-8")).get(release.name)
-    if digest is None:
-        raise ValueError("No published SHA-256 checksum was found for this AppImage.")
-    return Release(release.version, release.name, release.url, release.size, digest)
+    return with_checksum(app, str(data["tag_name"]), release, cancel)
+
+
+class ReleaseAssetsParser(HTMLParser):
+    """Read GitHub's asset links and filename-labelled digest controls."""
+
+    def __init__(self, download_prefix: str) -> None:
+        super().__init__()
+        self.download_prefix = download_prefix
+        self.assets: dict[str, dict[str, Any]] = {}
+        self.digests: dict[str, str] = {}
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        attributes = dict(attrs)
+        if tag == "a":
+            url = urljoin("https://github.com", attributes.get("href") or "")
+            if url.lower().startswith(self.download_prefix.lower()):
+                name = unquote(url[len(self.download_prefix) :])
+                if name in self.assets and self.assets[name]["browser_download_url"] != url:
+                    raise ValueError("GitHub returned conflicting asset download links.")
+                # GitHub displays rounded sizes; HEAD supplies the exact size after selection.
+                self.assets[name] = {"name": name, "browser_download_url": url, "size": 1}
+        if tag == "clipboard-copy":
+            label = attributes.get("aria-label") or ""
+            prefix = "Copy to clipboard digest for "
+            digest = attributes.get("value") or ""
+            if label.startswith(prefix) and re.fullmatch(r"sha256:[a-fA-F0-9]{64}", digest):
+                name = label[len(prefix) :]
+                if name in self.digests and self.digests[name] != digest.lower():
+                    raise ValueError("GitHub returned conflicting SHA-256 digests for an asset.")
+                self.digests[name] = digest.lower()
 
 
 def page_release(app: App, cancel: Event) -> Release:
@@ -253,40 +329,29 @@ def page_release(app: App, cancel: Event) -> Release:
         raise ValueError("GitHub returned an invalid release tag.")
     download_prefix = f"https://github.com/{app.repo}/releases/download/{quote(tag, safe='')}/"
     check_cancel(cancel)
-    sums = checksums(read_metadata(download_prefix + "SHA256SUMS.txt").decode("utf-8"))
-    name = next(
-        (
-            name
-            for expected in asset_names(app, tag.removeprefix("v"), architecture())
-            for name in sums
-            if name.casefold() == expected.casefold()
-        ),
-        None,
+    parser = ReleaseAssetsParser(download_prefix)
+    parser.feed(
+        read_metadata(
+            f"https://github.com/{app.repo}/releases/expanded_assets/{quote(tag, safe='')}"
+        ).decode("utf-8")
     )
-    if name is None:
-        raise ValueError(
-            f"No supported {architecture()} AppImage filename with a published checksum was found."
-        )
+    parser.close()
+    if not parser.assets:
+        raise ValueError("Could not read GitHub's public asset listing; retry discovery later.")
+    assets = [
+        {**asset, "digest": parser.digests.get(name, "")} for name, asset in parser.assets.items()
+    ]
+    release = select_release(app, {"tag_name": tag, "assets": assets}, architecture())
+    release = with_checksum(app, tag, release, cancel)
     check_cancel(cancel)
-    with request(download_prefix + name, method="HEAD") as response:
+    with request(release.url, method="HEAD") as response:
         length = response.headers.get("Content-Length", "")
     if not length.isdigit() or len(length) > 12:
         raise ValueError("GitHub did not provide the AppImage's download size.")
-    return select_release(
-        app,
-        {
-            "tag_name": tag,
-            "assets": [
-                {
-                    "name": name,
-                    "browser_download_url": download_prefix + name,
-                    "size": int(length),
-                    "digest": "sha256:" + sums[name],
-                }
-            ],
-        },
-        architecture(),
-    )
+    size = int(length)
+    if not 0 < size <= MAX_DOWNLOAD:
+        raise ValueError("The AppImage has an invalid download size.")
+    return replace(release, size=size)
 
 
 def cached_release(app: App, cache_dir: Path) -> Release | None:
