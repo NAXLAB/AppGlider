@@ -24,6 +24,7 @@ Versions shown are illustrative.
 - See GitHub request limits, retry times and cached release information from the footer.
 - Discover their application icons or choose a local PNG/SVG, with offline icon storage.
 - Create application-menu shortcuts and access the launcher from the system tray.
+- Run a single window per user: launching AppHarbour again raises the running one.
 
 AppHarbour manages its own installations. Existing AppImages from other launchers are
 left alone. **Installed (N)** and **Updates (N)** show library totals, even while searching.
@@ -40,7 +41,8 @@ chmod +x AppHarbour-0.2.3-linux-x86_64.AppImage
 ```
 
 Keep the file in a permanent location: AppHarbour creates a menu shortcut pointing to it.
-If you move it, launch it again to repair the shortcut. If FUSE is unavailable, add
+If you move it, launch it again to repair the shortcut. A development run never repoints an
+existing working shortcut. If FUSE is unavailable, add
 `--appimage-extract-and-run` to the launch command.
 
 The current package targets Linux x86_64 desktops with glibc 2.35 or newer, such as

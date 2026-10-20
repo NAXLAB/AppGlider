@@ -17,7 +17,9 @@ needed. The application catalog's upstream icons remain separate.
 - Display name and Qt organisation/application IDs: `AppHarbour`.
 - Python module and command: `appharbour`.
 - Library, custom repositories, release cache and icons: `$XDG_DATA_HOME/appharbour/`
-  (normally `~/.local/share/appharbour/`).
+  (normally `~/.local/share/appharbour/`). The release cache holds `etags.json`; the data
+  folder also holds `library.lock` and `appharbour.lock` (single-instance guard, whose
+  wake-up socket lives in `$XDG_RUNTIME_DIR`).
 - Preferences: `~/.config/AppHarbour/AppHarbour.conf`, respecting `XDG_CONFIG_HOME`.
 - Installation ownership marker: `.appharbour`, with `AppHarbour` as its first line.
 - Managed-app shortcuts: `appharbour-<id>.desktop`, marked `X-AppHarbour=true`.

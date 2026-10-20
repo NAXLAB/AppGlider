@@ -22,7 +22,9 @@ Failed or cancelled downloads leave the active version intact.
 
 Uninstalled cards show **Available** and **Install**, without release versions or badges.
 Installing checks the eligible release using the saved preference and the five-minute
-request cache, then downloads and verifies the AppImage. To inspect an uninstalled app
+request cache, confirms there is enough free disk space for the download plus a 64 MiB
+margin, then downloads and verifies the AppImage. A server-reported size that differs from
+the published size is rejected. To inspect an uninstalled app
 without installing it, click its name and choose **Check releases** in its details.
 This explicit check bypasses the request cache. Adding a repository still inspects its
 release and published checksum before adding the card. With no installed apps, startup
@@ -74,9 +76,10 @@ any eligible update. Release badges appear only beside the primary version. When
 available, its version carries the badge and the installed version appears underneath.
 Click an application's name to view the other stable and preview releases in its details.
 
-Discovery examines up to 30 recent releases, plus GitHub's designated latest stable
-release. The API normally uses two metadata requests per repository: the latest stable release
-and a recent-release listing. Checksums can require additional requests. The public
+Discovery examines up to 100 recent releases (one listing request), plus GitHub's designated
+latest stable release. The API normally uses two metadata requests per repository: the latest
+stable release and a recent-release listing. API responses are stored with their ETag, so a
+repeat request is conditional and an unchanged answer (304) is reused. Checksums can require additional requests. The public
 fallback examines up to three pages of ten releases. Unrecognised version tags are excluded.
 If the newest eligible version lacks a compatible AppImage or checksum, discovery explains the problem rather
 than silently choosing an older download. Previews use the same CPU and SHA-256 checks
@@ -90,7 +93,9 @@ Checked release information is retained across restarts, even after its five-min
 request cache expires. Installed cards show when it was checked, whether a refresh is needed and
 whether a refresh failed. Failed checks keep previously known versions and badges visible.
 Downloads still require a current successful lookup and verification. Background checks
-run one app at a time and keep application launching and release preferences available.
+run one app at a time, or up to three at once while GitHub has most of its request
+allowance left (at least 30 requests reported), and keep application launching and release
+preferences available.
 The separate **Refresh library** button has been removed; local records reload alongside
 release refreshes and application changes.
 
@@ -172,6 +177,19 @@ Changing the folder leaves existing installations in place; their updates stay w
 AppHarbour creates its own menu entry. Managed apps get entries such as
 **PhotoCraft (AppHarbour)**. Updates reuse the existing entry, and
 **⋯ → Create/repair menu shortcut** restores a missing managed-app shortcut.
+
+The AppHarbour entry itself (`appharbour.desktop`) is rewritten only when it is missing,
+when its target no longer exists, or when a newer packaged AppImage takes over. Development
+runs do not repoint a working entry.
+
+Only one AppHarbour window runs per user. Starting it again raises the existing window and
+exits.
+
+If `library.json` contains entries for applications that are not in the current catalog
+(for example a removed repository), they are kept untouched and a footer button
+**Review N unrecognised entries…** appears. Tick entries to forget them; nothing is
+forgotten unless you confirm, and files on disk are never deleted. Unreadable or malformed
+library files are still preserved and reported.
 
 The system tray offers **Open AppHarbour**, **Refresh releases**, installed apps and **Quit**.
 Closing the window hides it when a tray is available; downloads continue in the background.
