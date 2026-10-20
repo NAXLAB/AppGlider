@@ -13,7 +13,7 @@ from dataclasses import asdict, dataclass, replace
 from html.parser import HTMLParser
 from http.client import HTTPException, HTTPMessage
 from pathlib import Path
-from threading import Event
+from threading import Event, Lock
 from typing import IO, Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, unquote, urljoin, urlsplit
@@ -28,6 +28,10 @@ RELEASE_PAGES = 3
 RETRY_DELAYS = (0.5, 1.5)
 RETRY_STATUSES = (500, 502, 503, 504)
 _RETRY_AFTER: dict[str, float] = {}
+ETAG_ENTRIES = 200
+ETAG_BODY_LIMIT = 512 * 1024
+_ETAG_LOCK = Lock()
+_ETAG_FILE: Path | None = None
 
 MAX_METADATA = 4 * 1024 * 1024
 MAX_DOWNLOAD = 4 * 1024 * 1024 * 1024
@@ -155,13 +159,16 @@ def timed_out(error: Exception) -> bool:
     return isinstance(reason, TimeoutError)
 
 
-def request(url: str, *, method: str = "GET") -> Any:
+def request(url: str, *, method: str = "GET", etag: str = "") -> Any:
     if not valid_url(url):
         raise ValueError("Refusing an untrusted download location.")
     host = urlsplit(url).netloc
     if _RETRY_AFTER.get(host, 0) > time.time():
         raise RateLimited(host, _RETRY_AFTER[host])
-    req = Request(url, headers={"User-Agent": f"AppHarbour/{APP_VERSION}"}, method=method)
+    headers = {"User-Agent": f"AppHarbour/{APP_VERSION}"}
+    if etag:
+        headers["If-None-Match"] = etag
+    req = Request(url, headers=headers, method=method)
     for attempt in range(len(RETRY_DELAYS) + 1):
         try:
             return _open(req, host)
@@ -219,16 +226,60 @@ def _open(req: Request, host: str) -> Any:
         raise
 
 
-def read_metadata(url: str) -> bytes:
+def _etag_entries() -> dict[str, Any]:
+    if _ETAG_FILE is None:
+        return {}
     try:
-        with request(url) as response:
+        if _ETAG_FILE.stat().st_size > MAX_METADATA:
+            return {}
+        data = json.loads(_ETAG_FILE.read_text())
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _remember_etag(url: str, etag: str | None, body: bytes) -> None:
+    """Keep API bodies by ETag so a later 304 (free of rate limit) can reuse them."""
+    if _ETAG_FILE is None:
+        return
+    with _ETAG_LOCK:
+        entries = _etag_entries()
+        entries.pop(url, None)
+        if etag and len(etag) <= 256 and len(body) <= ETAG_BODY_LIMIT:
+            with contextlib.suppress(UnicodeDecodeError):
+                entries[url] = {"etag": etag, "body": body.decode()}
+        while len(entries) > ETAG_ENTRIES or len(json.dumps(entries)) > MAX_METADATA:
+            del entries[next(iter(entries))]
+        with contextlib.suppress(OSError):
+            atomic_json(_ETAG_FILE, entries)
+
+
+def read_metadata(url: str) -> bytes:
+    stored: Any = None
+    if urlsplit(url).netloc == "api.github.com":
+        with _ETAG_LOCK:
+            stored = _etag_entries().get(url)
+        if not (
+            isinstance(stored, dict)
+            and isinstance(stored.get("etag"), str)
+            and isinstance(stored.get("body"), str)
+        ):
+            stored = None
+    try:
+        with request(url, etag=stored["etag"] if stored else "") as response:
             data: bytes = response.read(MAX_METADATA + 1)
-    except HTTPError:
+            etag = response.headers.get("ETag") if hasattr(response, "headers") else None
+    except HTTPError as error:
+        if error.code == 304 and stored:
+            error.close()
+            return str(stored["body"]).encode()
         raise
     except (OSError, HTTPException) as error:
         raise ValueError(UNREACHABLE) from error
     if len(data) > MAX_METADATA:
         raise ValueError("The release metadata is too large.")
+    if urlsplit(url).netloc == "api.github.com":
+        _remember_etag(url, etag, data)
     return data
 
 
@@ -471,7 +522,8 @@ def api_entries(app: App, cancel: Event) -> list[Any]:
     if not app.include_prereleases and stable is not None:
         return [{**stable, "is_latest": True}]
     check_cancel(cancel)
-    items = json.loads(read_metadata(f"{prefix}?per_page={RELEASE_PAGES * 10}&page=1"))
+    # One request at GitHub's maximum page size; older releases are not needed.
+    items = json.loads(read_metadata(f"{prefix}?per_page=100&page=1"))
     if not isinstance(items, list):
         raise ValueError("GitHub returned an invalid release listing.")
     entries: list[Any] = []
@@ -731,6 +783,9 @@ def release_cache_path(app: App, cache_dir: Path) -> Path:
 
 
 def restore_rate_limits(cache_dir: Path) -> None:
+    # Also marks where API ETags are kept, since every discovery path calls this first.
+    global _ETAG_FILE
+    _ETAG_FILE = cache_dir / "etags.json"
     try:
         limits_path = cache_dir / "limits.json"
         if limits_path.stat().st_size <= MAX_METADATA:

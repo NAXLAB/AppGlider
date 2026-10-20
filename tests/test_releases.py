@@ -143,6 +143,41 @@ class ReleaseTests(unittest.TestCase):
                     self.release, self.cache / "download", Event(), lambda *args: None
                 )
 
+    def test_api_etags_make_repeat_requests_conditional(self):
+        url = "https://api.github.com/repos/owner/app/releases/latest"
+        seen = []
+
+        def fake_request(target, *, method="GET", etag=""):
+            seen.append(etag)
+            if etag:
+                raise HTTPError(target, 304, "Not Modified", Message(), io.BytesIO())
+            response = Response(target, {"ETag": '"abc"'})
+            response.write(b'{"tag_name": "v1"}')
+            response.seek(0)
+            return response
+
+        with (
+            patch.object(releases, "request", fake_request),
+            patch.object(releases, "_ETAG_FILE", self.cache / "etags.json"),
+        ):
+            first = releases.read_metadata(url)
+            second = releases.read_metadata(url)
+            self.assertEqual(first, second)
+            self.assertEqual(seen, ["", '"abc"'])
+            (self.cache / "etags.json").write_text("{broken")
+            self.assertEqual(releases.read_metadata(url), first)
+            self.assertEqual(seen[-1], "")
+
+    def test_etag_cache_is_bounded_and_skips_other_hosts(self):
+        with patch.object(releases, "_ETAG_FILE", self.cache / "etags.json"):
+            for number in range(releases.ETAG_ENTRIES + 5):
+                releases._remember_etag(f"https://api.github.com/{number}", '"e"', b"{}")
+            releases._remember_etag("https://api.github.com/big", '"e"', b"x" * 600_000)
+            entries = json.loads((self.cache / "etags.json").read_text())
+        self.assertEqual(len(entries), releases.ETAG_ENTRIES)
+        self.assertNotIn("https://api.github.com/0", entries)
+        self.assertNotIn("https://api.github.com/big", entries)
+
     def test_download_rejects_a_mismatched_content_length_before_reading(self):
         response = Response("x", {"Content-Length": str(self.release.size + 1)})
         with patch.object(releases, "request", return_value=response):

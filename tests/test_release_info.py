@@ -38,7 +38,7 @@ class ReleaseInfoTests(unittest.TestCase):
         ) as read:
             info = discover_releases(APP, Event(), self.cache)
         self.assertEqual(read.call_count, 2)
-        self.assertIn("per_page=30", read.call_args.args[0])
+        self.assertIn("per_page=100", read.call_args.args[0])
         self.assertEqual(info.choice(False).version, "1.2.3")
         self.assertEqual(info.choice(True).version, "1.3.0-beta.10")
         self.assertFalse(APP.include_prereleases)
