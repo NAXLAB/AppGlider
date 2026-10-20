@@ -31,6 +31,8 @@ _RETRY_AFTER: dict[str, float] = {}
 
 MAX_METADATA = 4 * 1024 * 1024
 MAX_DOWNLOAD = 4 * 1024 * 1024 * 1024
+DOWNLOAD_CHUNK = 1024 * 1024
+PROGRESS_INTERVAL = 0.1
 VERSION = r"[0-9]+(?:\.[0-9]+){1,3}(?:-[A-Za-z0-9.-]+)?(?:\+[A-Za-z0-9.-]+)?"
 Progress = Callable[[str, int, int], None]
 ASSET_ARCHITECTURES = {
@@ -714,6 +716,15 @@ def release_from_cache(app: App, item: Any) -> Release:
     return release
 
 
+def file_stamp(path: Path) -> tuple[int, int, int] | None:
+    """Identify a file's current contents cheaply; None when it cannot be read."""
+    try:
+        info = path.stat()
+    except OSError:
+        return None
+    return info.st_mtime_ns, info.st_size, info.st_ino
+
+
 def release_cache_path(app: App, cache_dir: Path) -> Path:
     suffix = "-prereleases" if app.include_prereleases else ""
     return cache_dir / f"{app.id}-{architecture()}{suffix}{build_cache_suffix(app)}.json"
@@ -774,11 +785,16 @@ def download(release: Release, destination: Path, cancel: Event, progress: Progr
         raise ValueError("A published SHA-256 checksum is required before downloading.")
     digest = hashlib.sha256()
     received = 0
+    last_report = 0.0
     with request(release.url) as response, destination.open("wb") as output:
+        headers = getattr(response, "headers", None)
+        length = headers.get("Content-Length") if headers is not None else None
+        if length is not None and length.isdigit() and int(length) != release.size:
+            raise ValueError("The download size did not match the published size.")
         while True:
             check_cancel(cancel)
             try:
-                chunk = response.read(256 * 1024)
+                chunk = response.read(DOWNLOAD_CHUNK)
             except (OSError, HTTPException) as error:
                 raise ValueError(
                     "The download was interrupted. The installed version was kept."
@@ -790,7 +806,11 @@ def download(release: Release, destination: Path, cancel: Event, progress: Progr
                 raise ValueError("The download exceeded its published size.")
             digest.update(chunk)
             output.write(chunk)
-            progress("Downloading AppImage", received, release.size)
+            now = time.monotonic()
+            if now - last_report >= PROGRESS_INTERVAL:
+                last_report = now
+                progress("Downloading AppImage", received, release.size)
+        progress("Downloading AppImage", received, release.size)
         output.flush()
         os.fsync(output.fileno())
     check_cancel(cancel)

@@ -60,15 +60,23 @@ from appharbour.catalog import APPS, App
 from appharbour.icons import icon_pixmap
 from appharbour.jobs import Task, TaskResult
 from appharbour.library import Installed, Library
-from appharbour.release_info import ReleaseInfo, cached_info, discover_releases, remember_release
+from appharbour.release_info import (
+    ReleaseInfo,
+    cached_info,
+    discover_releases,
+    info_path,
+    remember_release,
+)
 from appharbour.releases import (
     BuildChoiceRequired,
     Progress,
     Release,
     cached_release,
     check_cancel,
+    file_stamp,
     github_request_status,
     latest_release,
+    release_cache_path,
     restore_rate_limits,
     variant_label,
     version_key,
@@ -657,6 +665,8 @@ class LauncherWindow(QMainWindow):
         self.releases: dict[str, Release] = {}
         self.check_errors: dict[str, str] = {}
         self.release_infos: dict[str, ReleaseInfo] = {}
+        self.cache_stamps: dict[str, object] = {}
+        self.tray_key: list[tuple[str, str, Path, tuple[int, int, int] | None]] | None = None
         self.release_errors: dict[str, str] = {}
         self.release_task: Task | None = None
         self.release_queue: list[str] = []
@@ -848,13 +858,16 @@ class LauncherWindow(QMainWindow):
         self.tabs.setTabText(2, f"Updates ({update_count})")
         self.tray.setToolTip(f"AppHarbour · Updates: {update_count}")
         self.tray_check_action.setEnabled(self.release_task is None and bool(self.installed))
-        self.tray_apps_menu.clear()
-        self.tray_apps_menu.setEnabled(bool(self.installed))
-        for app in self.apps:
-            if app.id in self.installed:
-                action = self.tray_apps_menu.addAction(
-                    QIcon(icon_pixmap(self.library.icon_path(app), 64)), app.name
-                )
+        tray_apps = [
+            (app, self.library.icon_path(app)) for app in self.apps if app.id in self.installed
+        ]
+        tray_key = [(app.id, app.name, path, file_stamp(path)) for app, path in tray_apps]
+        if tray_key != self.tray_key:
+            self.tray_key = tray_key
+            self.tray_apps_menu.clear()
+            self.tray_apps_menu.setEnabled(bool(tray_apps))
+            for app, path in tray_apps:
+                action = self.tray_apps_menu.addAction(QIcon(icon_pixmap(path, 64)), app.name)
                 action.triggered.connect(
                     lambda checked=False, app_id=app.id: self.launch_app(app_id)
                 )
@@ -1034,8 +1047,13 @@ class LauncherWindow(QMainWindow):
                         self.check_errors.pop(app.id, None)
                         self.cards[app.id] = self.create_card(app)
                 self.apps = apps
+            cache_dir = self.library.data_dir / "release-cache"
             for app in apps:
-                info = cached_info(app, self.library.data_dir / "release-cache")
+                paths = (info_path(app, cache_dir), release_cache_path(app, cache_dir))
+                stamps = tuple(file_stamp(path) for path in paths)
+                fresh = self.cache_stamps.get(app.id) != (paths, stamps)
+                self.cache_stamps[app.id] = (paths, stamps)
+                info = cached_info(app, cache_dir) if fresh else None
                 if info is not None and (
                     app.id not in self.release_infos
                     or info.checked_at > self.release_infos[app.id].checked_at
@@ -1044,8 +1062,8 @@ class LauncherWindow(QMainWindow):
                     github_status.release_result("Cached information", app.repo, info.checked_at)
                 if app.id in self.release_infos:
                     self.apply_release_info(app)
-                else:
-                    release = cached_release(app, self.library.data_dir / "release-cache")
+                elif fresh:
+                    release = cached_release(app, cache_dir)
                     if release is not None:
                         self.releases[app.id] = release
             self.installed = installed

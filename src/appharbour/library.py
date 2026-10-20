@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import tempfile
 import time
@@ -32,10 +33,12 @@ from appharbour.releases import (
     architecture,
     check_cancel,
     download,
+    file_stamp,
     version_key,
 )
 from appharbour.storage import atomic_bytes, atomic_json
 
+FREE_SPACE_MARGIN = 64 * 1024 * 1024
 MAX_LOG_BYTES = 5 * 1024 * 1024
 STALE_STAGE_SECONDS = 24 * 60 * 60
 LOCK_WAIT_SECONDS = 3.0
@@ -118,14 +121,22 @@ class Library:
         xdg_data = Path(os.environ.get("XDG_DATA_HOME", str(home / ".local/share")))
         self.desktop_dir = desktop_dir if desktop_dir is not None else xdg_data / "applications"
         self.processes: dict[str, subprocess.Popen[bytes]] = {}
+        self._catalog: tuple[tuple[tuple[int, int, int] | None, ...], tuple[App, ...]] | None = None
 
     @property
     def apps(self) -> tuple[App, ...]:
-        return load_apps(
+        paths = (
             self.data_dir / "repositories.json",
             self.data_dir / "release-preferences.json",
             self.data_dir / "build-preferences.json",
         )
+        stamps = tuple(file_stamp(path) for path in paths)
+        if self._catalog is not None and self._catalog[0] == stamps:
+            return self._catalog[1]
+        # Failures raise before anything is stored, so a corrupt file is reported every time.
+        apps = load_apps(*paths)
+        self._catalog = (stamps, apps)
+        return apps
 
     def _save_build_variant(self, app_id: str, variant: str) -> None:
         if not valid_build_variant(variant):
@@ -492,6 +503,8 @@ class Library:
                 fd, temporary = tempfile.mkstemp(prefix=".download-", dir=plan.root)
                 os.close(fd)
                 stage = Path(temporary)
+                if shutil.disk_usage(plan.root).free < release.size + FREE_SPACE_MARGIN:
+                    raise ValueError("There is not enough free disk space for this download.")
                 download(release, stage, cancel, progress)
                 check_appimage(stage)
                 stage.chmod(0o755)

@@ -18,7 +18,7 @@ from PySide6.QtWidgets import QApplication
 
 from appharbour import APP_ICON
 from appharbour.catalog import APPS, custom_app
-from appharbour.icons import MAX_ICON_BYTES, discover_icons, normalise_icon
+from appharbour.icons import MAX_ICON_BYTES, discover_icons, icon_pixmap, normalise_icon
 from appharbour.library import Library
 from appharbour.releases import Cancelled, RateLimited
 
@@ -59,6 +59,18 @@ class IconTests(unittest.TestCase):
                 source.save(buffer, "PNG")
                 image = QImage.fromData(normalise_icon(bytes(buffer.data().data())), "PNG")
                 self.assertEqual((image.width(), image.height()), (expected, expected))
+
+    def test_changed_icon_files_are_read_again_despite_the_pixmap_cache(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "icon.png"
+            for colour, stamp in ((0xFF0000, 1), (0x0000FF, 2)):
+                image = QImage(8, 8, QImage.Format.Format_RGB32)
+                image.fill(colour)
+                image.save(str(path))
+                os.utime(path, ns=(stamp * 10**9, stamp * 10**9))
+                pixmap = icon_pixmap(path, 8)
+                self.assertEqual(pixmap.toImage().pixel(4, 4) & 0xFFFFFF, colour)
+            self.assertIs(icon_pixmap(path, 8), icon_pixmap(path, 8))
 
     def test_invalid_large_and_external_resource_images_are_rejected(self):
         invalid = [

@@ -143,6 +143,29 @@ class ReleaseTests(unittest.TestCase):
                     self.release, self.cache / "download", Event(), lambda *args: None
                 )
 
+    def test_download_rejects_a_mismatched_content_length_before_reading(self):
+        response = Response("x", {"Content-Length": str(self.release.size + 1)})
+        with patch.object(releases, "request", return_value=response):
+            with self.assertRaisesRegex(ValueError, "did not match the published size"):
+                releases.download(self.release, self.cache / "download", Event(), lambda *a: None)
+
+    def test_download_progress_is_throttled_but_reports_completion(self):
+        data = appimage_bytes(b"x" * (3 * releases.DOWNLOAD_CHUNK))
+        release = release_for("1.2.3", data)
+        response = Response("x", {"Content-Length": str(len(data))})
+        response.write(data)
+        response.seek(0)
+        reports = []
+        with (
+            patch.object(releases, "request", return_value=response),
+            patch.object(releases.time, "monotonic", return_value=1000.0),
+        ):
+            releases.download(
+                release, self.cache / "download", Event(), lambda *args: reports.append(args[1])
+            )
+        self.assertEqual(reports[-1], len(data))
+        self.assertLessEqual(len(reports), 2)
+
     def test_public_asset_links_match_slash_tags_in_either_form(self):
         app = custom_app("getcadcraft/studio")
         name = "CadCraft-Studio-0.6-x86_64.AppImage"

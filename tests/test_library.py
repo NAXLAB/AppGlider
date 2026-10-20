@@ -24,6 +24,7 @@ from appharbour.releases import (
     select_release,
     version_key,
 )
+from appharbour.storage import atomic_json
 
 APP = APPS[0]
 
@@ -454,6 +455,33 @@ class LibraryTests(unittest.TestCase):
         self.assertTrue(first.path.parent.exists())
         self.assertFalse((first.path.parent.parent / "1.1.0").exists())
         self.assertFalse(list(first.path.parent.parent.glob(".download-*")))
+
+    def test_catalog_is_cached_but_picks_up_edits_and_keeps_reporting_corruption(self) -> None:
+        self.assertEqual(self.library.apps, self.library.apps)
+        repositories = self.library.data_dir / "repositories.json"
+        atomic_json(repositories, [{"repo": "owner/example-app", "name": "Example"}])
+        self.assertEqual(self.library.apps[-1].repo, "owner/example-app")
+        repositories.write_text("{broken")
+        for _ in range(2):
+            with self.assertRaisesRegex(ValueError, "Cannot read"):
+                self.library.apps
+        atomic_json(repositories, [])
+        self.assertEqual(self.library.apps, tuple(APPS))
+        self.library.set_release_preference(APP.id, True)
+        self.assertTrue(self.library.apps[0].include_prereleases)
+
+    def test_install_needs_free_space_for_the_download(self) -> None:
+        data = appimage_bytes()
+        release = release_for("1.0.0", data)
+        usage = shutil._ntuple_diskusage(10**12, 10**12 - 1024, 1024)
+        with (
+            patch("appharbour.library.shutil.disk_usage", return_value=usage),
+            patch("appharbour.library.download") as fetch,
+        ):
+            with self.assertRaisesRegex(ValueError, "not enough free disk space"):
+                self.library.install(APP, release, Event(), ignore_progress)
+            fetch.assert_not_called()
+        self.assertNotIn(APP.id, self.library.records())
 
     def test_lock_waits_briefly_then_reports_another_launcher(self) -> None:
         with self.library._lock():

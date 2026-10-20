@@ -25,12 +25,23 @@ class IconCandidate:
     png: bytes
 
 
+_PIXMAPS: dict[tuple[str, int, int, int], QPixmap] = {}
+
+
 def icon_pixmap(path: Path, size: int) -> QPixmap:
     # QImage avoids QPixmap's file cache retaining an icon replaced within the same second.
+    # The cache key includes the file's mtime and size, so a replaced icon is read again.
+    try:
+        info = path.stat()
+        key = (str(path), info.st_mtime_ns, info.st_size, size)
+    except OSError:
+        key = None
+    if key is not None and key in _PIXMAPS:
+        return _PIXMAPS[key]
     image = QImage(str(path))
     if image.isNull():
         image = QImage(str(APP_ICON))
-    return QPixmap.fromImage(
+    pixmap = QPixmap.fromImage(
         image.scaled(
             size,
             size,
@@ -38,6 +49,11 @@ def icon_pixmap(path: Path, size: int) -> QPixmap:
             Qt.TransformationMode.SmoothTransformation,
         )
     )
+    if key is not None:
+        if len(_PIXMAPS) >= 256:
+            _PIXMAPS.clear()
+        _PIXMAPS[key] = pixmap
+    return pixmap
 
 
 def normalise_icon(data: bytes) -> bytes:
