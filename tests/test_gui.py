@@ -87,14 +87,16 @@ class LibraryTests(unittest.TestCase):
             patch("appharbour.app.QApplication") as application,
             patch("appharbour.app.LauncherWindow") as window,
             patch("appharbour.app.QTimer.singleShot") as timer,
+            patch("appharbour.app.SingleInstance") as instance,
         ):
+            instance.return_value.acquire.return_value = True
             application.return_value.exec.return_value = 0
             self.assertEqual(main(), 0)
             application.return_value.setOrganizationName.assert_called_once_with("AppHarbour")
             application.return_value.setApplicationName.assert_called_once_with("AppHarbour")
             application.return_value.setApplicationDisplayName.assert_called_once_with("AppHarbour")
             application.return_value.setDesktopFileName.assert_called_once_with("appharbour")
-            window.return_value.library.create_launcher_shortcut.assert_called_once()
+            window.return_value.library.refresh_launcher_shortcut.assert_called_once()
             timer.assert_called_once_with(0, window.return_value.refresh_releases)
 
     def test_close_hides_to_tray_and_activation_restores_window(self) -> None:

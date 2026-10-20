@@ -6,11 +6,12 @@ import ssl
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import QStandardPaths, QTimer
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication, QComboBox
 
 from appharbour import APP_ICON, APP_NAME, APP_VERSION
+from appharbour.instance import SingleInstance
 from appharbour.window import LauncherWindow
 
 
@@ -30,13 +31,22 @@ def main() -> int:
     app.setDesktopFileName("appharbour")
     app.setWindowIcon(QIcon(str(APP_ICON)))
     app.setStyle("Fusion")
+    smoke = "--smoke-test" in sys.argv
+    instance = SingleInstance(
+        Path(QStandardPaths.writableLocation(QStandardPaths.StandardLocation.GenericDataLocation))
+        / "appharbour"
+    )
+    if not smoke and not instance.acquire():
+        return 0
     window = LauncherWindow()
+    instance.activated.connect(window.show_launcher)
+    command = launcher_command()
     try:
-        window.library.create_launcher_shortcut(launcher_command())
+        window.library.refresh_launcher_shortcut(command, packaged=len(command) == 1)
     except (OSError, ValueError) as error:
         window.footer.setText(f"Could not create the AppHarbour menu shortcut: {error}")
     window.show()
-    if "--smoke-test" in sys.argv:
+    if smoke:
 
         def report() -> None:
             print(
@@ -61,7 +71,7 @@ def main() -> int:
                         "https_certificates": ssl.create_default_context().cert_store_stats()[
                             "x509_ca"
                         ],
-                        "command": launcher_command(),
+                        "command": command,
                         "data": str(window.library.data_dir),
                     }
                 ),
@@ -72,4 +82,6 @@ def main() -> int:
         QTimer.singleShot(200, report)
     else:
         QTimer.singleShot(0, window.refresh_releases)
-    return app.exec()
+    status = app.exec()
+    instance.release()
+    return status

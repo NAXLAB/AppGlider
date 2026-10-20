@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import tempfile
@@ -678,6 +679,28 @@ class Library:
                 raise ValueError("Install this app with AppHarbour first.")
             self._owned(app, installed.path)
             self._shortcut(app, installed.path)
+
+    def refresh_launcher_shortcut(self, arguments: list[str], packaged: bool) -> Path:
+        """Write the menu entry unless that would needlessly repoint a working one.
+
+        An existing entry is kept while its target still exists, except that a packaged
+        image newer than that target takes over. Development runs never repoint it.
+        """
+        shortcut = self.desktop_dir / "appharbour.desktop"
+        if shortcut.is_file() and not shortcut.is_symlink():
+            lines = shortcut.read_text().splitlines()
+            current = next((line[5:] for line in lines if line.startswith("Exec=")), "")
+            if "X-AppHarbour=true" in lines:
+                if current == desktop_exec(arguments):
+                    return shortcut
+                try:
+                    age = Path(shlex.split(current)[0]).stat().st_mtime_ns
+                    newer = packaged and Path(arguments[0]).stat().st_mtime_ns > age
+                except (ValueError, IndexError, OSError):
+                    newer = True
+                if not newer:
+                    return shortcut
+        return self.create_launcher_shortcut(arguments)
 
     def create_launcher_shortcut(self, arguments: list[str]) -> Path:
         command = desktop_exec(arguments)

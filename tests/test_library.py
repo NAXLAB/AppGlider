@@ -554,6 +554,32 @@ class LibraryTests(unittest.TestCase):
             self.library.create_launcher_shortcut([sys.executable, "-O", "-m", "appharbour"])
         self.assertIn("Someone else's shortcut", shortcut.read_text())
 
+    def test_refresh_keeps_a_working_shortcut_unless_a_newer_image_takes_over(self) -> None:
+        old, new = Path(self.temp.name) / "old.AppImage", Path(self.temp.name) / "new.AppImage"
+        old.write_bytes(b"old")
+        new.write_bytes(b"new")
+        os.utime(old, (1_000, 1_000))
+        os.utime(new, (2_000, 2_000))
+        shortcut = self.library.refresh_launcher_shortcut([str(old)], packaged=True)
+        self.assertIn(desktop_exec([str(old)]), shortcut.read_text())
+        development = ["/project/.venv/bin/python", "-O", "-m", "appharbour"]
+        self.library.refresh_launcher_shortcut(development, packaged=False)
+        self.assertIn(desktop_exec([str(old)]), shortcut.read_text())
+        self.library.refresh_launcher_shortcut([str(new)], packaged=True)
+        self.assertIn(desktop_exec([str(new)]), shortcut.read_text())
+        self.library.refresh_launcher_shortcut([str(old)], packaged=True)
+        self.assertIn(desktop_exec([str(new)]), shortcut.read_text())
+        new.unlink()
+        self.library.refresh_launcher_shortcut(development, packaged=False)
+        self.assertIn(desktop_exec(development), shortcut.read_text())
+
+    def test_refresh_still_refuses_foreign_shortcuts(self) -> None:
+        shortcut = self.library.desktop_dir / "appharbour.desktop"
+        shortcut.parent.mkdir(parents=True)
+        shortcut.write_text("[Desktop Entry]\nExec=/bin/true\n")
+        with self.assertRaisesRegex(OSError, "another application"):
+            self.library.refresh_launcher_shortcut(["/x.AppImage"], packaged=True)
+
     def test_packaged_shortcut_accepts_image_path_with_spaces(self) -> None:
         shortcut = self.library.create_launcher_shortcut(["/home/a b/AppHarbour.AppImage"])
         self.assertIn('Exec="/home/a b/AppHarbour.AppImage"\n', shortcut.read_text())
