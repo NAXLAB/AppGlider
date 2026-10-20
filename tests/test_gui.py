@@ -389,16 +389,23 @@ class LibraryTests(unittest.TestCase):
                         create = picker.findChild(QToolButton, "newFolderButton")
                         if create is None:
                             return
+                        deadline = time.monotonic() + 5
+                        while not create.isEnabled() and time.monotonic() < deadline:
+                            QTest.qWait(10)
                         create.click()
-                        QTest.qWait(50)
-                        editor = next(
-                            (
-                                edit
-                                for edit in picker.findChildren(QLineEdit)
-                                if edit.isVisible() and not edit.objectName()
-                            ),
-                            None,
-                        )
+                        editor = None
+                        while time.monotonic() < deadline:
+                            editor = next(
+                                (
+                                    edit
+                                    for edit in picker.findChildren(QLineEdit)
+                                    if edit.isVisible() and not edit.objectName()
+                                ),
+                                None,
+                            )
+                            if editor is not None:
+                                break
+                            QTest.qWait(10)
                         if editor is None:
                             return
                         editor.selectAll()
