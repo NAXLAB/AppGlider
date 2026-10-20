@@ -45,8 +45,10 @@ release. It never automatically downgrades to an older stable version. The expli
 **Roll back** action can still restore the previous installed version.
 
 Green **Latest** badges identify GitHub's designated latest stable release. Amber
-**Pre-release** badges identify preview releases. Each badge belongs to the adjacent
-version: an installed preview and an available stable update can show different badges.
+**Pre-release** badges identify preview releases. Cards show the installed version and
+any eligible update. Release badges appear only beside the primary version. When an update is
+available, its version carries the badge and the installed version appears underneath.
+Click an application's name to view the other stable and preview releases in its details.
 
 Discovery examines up to 30 recent releases, plus GitHub's designated latest stable
 release. The API normally uses two metadata requests per repository: the latest stable release
@@ -54,8 +56,8 @@ and a recent-release listing. Checksums can require additional requests. The pub
 fallback examines up to three pages of ten releases. Unrecognised version tags are excluded.
 If the newest eligible version lacks a compatible AppImage or checksum, discovery explains the problem rather
 than silently choosing an older download. Previews use the same CPU and SHA-256 checks
-as stable releases. Cards show a newer preview even when you follow stable releases;
-that notice does not count as an update until previews are enabled. Changing the release preference
+as stable releases. Previews shown in details only qualify as updates when previews
+are enabled for that application. Changing the release preference
 saves your choice without installing anything. GitHub's public-page fallback also respects
 this preference when its API quota is exhausted. If a project only publishes previews, AppHarbour explains
 that previews must be enabled before adding it.
@@ -119,7 +121,7 @@ an explanation. No GitHub token is needed.
 ## Settings and desktop integration
 
 Settings has General, Applications, Storage and About sections.
-The version button at the top right opens About.
+The version button at the bottom right opens About. It highlights on hover or keyboard focus.
 Choose System / Light / Dark appearance and the folder for new installations.
 Changing the folder leaves existing installations in place; their updates stay with them.
 

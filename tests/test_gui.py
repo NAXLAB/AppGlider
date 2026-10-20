@@ -317,6 +317,9 @@ class LibraryTests(unittest.TestCase):
 
     def test_clicking_name_opens_real_details_dialog(self) -> None:
         observed = []
+        info = self.release_info()
+        self.window.release_infos["solidcraft"] = info
+        self.window.apply_release_info(self.window.cards["solidcraft"].app)
 
         def close_details() -> None:
             dialog = self.qt.activeModalWidget()
@@ -331,6 +334,8 @@ class LibraryTests(unittest.TestCase):
         QTest.mouseClick(name, Qt.MouseButton.LeftButton)
         self.assertIn("About SolidCraft", observed)
         self.assertIn("tangency-labs/solidcraft", observed)
+        self.assertIn(info.stable.version, observed)
+        self.assertIn(info.preview.version, observed)
 
     def test_settings_save_cancel_and_theme_persistence(self) -> None:
         folder = str(Path(self.temp.name) / "future-apps")
@@ -467,7 +472,12 @@ class LibraryTests(unittest.TestCase):
             )
         card = self.window.cards[APP.id]
         self.assertEqual(card.available_version.badge.text(), "Latest")
-        self.assertEqual(card.other_version.badge.text(), "Pre-release")
+        self.assertNotIn(
+            info.preview.version,
+            " ".join(
+                label.text() for label in card.findChildren(QLabel) if label.isVisibleTo(card)
+            ),
+        )
         self.assertEqual(card.action_button.text(), "Install")
         self.assertEqual(self.window.tabs.tabText(2), "Updates (0)")
         self.assertFalse(hasattr(self.window, "rescan_button"))
@@ -503,8 +513,7 @@ class LibraryTests(unittest.TestCase):
         card = self.window.cards[APP.id]
         self.assertEqual(self.window.tabs.tabText(2), "Updates (1)")
         self.assertEqual(card.available_version.badge.text(), "Pre-release")
-        self.assertTrue(card.other_version.isHidden())
-        self.assertEqual(card.installed_version.badge.text(), "Latest")
+        self.assertTrue(card.installed_version.badge.isHidden())
         self.assertTrue(card.app.include_prereleases)
         reopened = LauncherWindow(self.settings, self.window.library)
         self.addCleanup(reopened.deleteLater)
@@ -514,6 +523,9 @@ class LibraryTests(unittest.TestCase):
         self.assertEqual(reopened.tabs.tabText(2), "Updates (1)")
         self.change_release_preference(0)
         self.assertEqual(self.window.tabs.tabText(2), "Updates (0)")
+        card = self.window.cards[APP.id]
+        self.assertTrue(card.available_version.isHidden())
+        self.assertEqual(card.installed_version.badge.text(), "Latest")
 
     def test_failed_refresh_retains_badges_and_shows_last_checked_without_dialog(self) -> None:
         info = replace(self.release_info(), checked_at=time.time() - 3600)
@@ -529,7 +541,7 @@ class LibraryTests(unittest.TestCase):
             warning.assert_not_called()
         card = self.window.cards[APP.id]
         self.assertEqual(card.available_version.badge.text(), "Latest")
-        self.assertEqual(card.other_version.badge.text(), "Pre-release")
+        self.assertEqual(self.window.release_infos[APP.id].preview, info.preview)
         self.assertIn("Refresh failed · checked", card.checked.text())
         self.assertIn("Offline", card.checked.toolTip())
 
@@ -662,7 +674,7 @@ class LibraryTests(unittest.TestCase):
                 warning.assert_called_once()
                 self.assertEqual(dialog.result(), 0)
 
-    def test_header_version_opens_about_and_settings_sections_are_accessible(self) -> None:
+    def test_footer_version_opens_about_and_settings_sections_are_accessible(self) -> None:
         observations = []
 
         def inspect_about() -> None:
@@ -675,8 +687,15 @@ class LibraryTests(unittest.TestCase):
                 dialog.reject()
 
         self.assertEqual(self.window.version_button.text(), f"v{APP_VERSION}")
+        self.assertEqual(
+            self.window.version_button.cursor().shape(), Qt.CursorShape.PointingHandCursor
+        )
+        self.assertEqual(self.window.version_button.toolTip(), "About AppHarbour")
+        self.assertGreater(
+            self.window.version_button.geometry().top(), self.window.scroll_area.geometry().bottom()
+        )
         QTimer.singleShot(0, inspect_about)
-        self.window.version_button.click()
+        QTest.mouseClick(self.window.version_button, Qt.MouseButton.LeftButton)
         self.assertEqual(observations, ["About"])
 
     def test_release_badges_describe_the_version_and_beta_waits_for_stable(self) -> None:
@@ -686,12 +705,14 @@ class LibraryTests(unittest.TestCase):
         )
         stable = Release("1.2.0", "solid.AppImage", "unused", 1, "0" * 64)
         card.set_state(beta, stable, False)
-        self.assertEqual(card.installed_version.badge.text(), "Pre-release")
+        self.assertTrue(card.installed_version.badge.isHidden())
         self.assertEqual(card.available_version.badge.text(), "Latest")
         self.assertTrue(card.update_button.isVisible())
         previous = Release("1.1.0", "solid.AppImage", "unused", 1, "0" * 64)
         card.set_state(beta, previous, False)
         self.assertFalse(card.update_button.isVisible())
+        self.assertTrue(card.available_version.isHidden())
+        self.assertEqual(card.installed_version.badge.text(), "Pre-release")
         self.assertIn("Waiting for a newer stable", card.checked.text())
         self.assertEqual(card.action_button.text(), "Launch")
         current = Installed(beta.path, "1.1.0", True)
@@ -700,6 +721,33 @@ class LibraryTests(unittest.TestCase):
         card.set_state(current, stable, False)
         self.assertEqual(card.installed_version.badge.text(), "")
         self.assertEqual(card.available_version.badge.text(), "Latest")
+
+    def test_preview_update_card_only_shows_the_update_and_installed_version(self) -> None:
+        info = self.release_info()
+        installed = Installed(
+            Path(self.temp.name) / "cura.AppImage", "1.1.0-beta.0", True, prerelease=True
+        )
+        card = self.window.cards[APP.id]
+        card.set_state(installed, info.preview.release, False, info=info)
+        self.assertEqual(card.available_version.text.text(), f"v{info.preview.version}")
+        self.assertEqual(card.installed_version.text.text(), f"v{installed.version}")
+        self.assertEqual(card.available_version.badge.text(), "Pre-release")
+        self.assertTrue(card.installed_version.badge.isHidden())
+        self.assertEqual(card.action_button.text(), "Launch")
+        self.assertTrue(card.update_button.isVisible())
+        self.assertNotIn(
+            f"v{info.stable.version}",
+            " ".join(
+                label.text() for label in card.findChildren(QLabel) if label.isVisibleTo(card)
+            ),
+        )
+        self.assertEqual(
+            sum(badge.isVisibleTo(card) for badge in card.findChildren(QLabel, "releaseBadge")), 1
+        )
+
+        card.set_state(installed, None, False, info=info)
+        self.assertTrue(card.available_version.isHidden())
+        self.assertEqual(card.installed_version.badge.text(), "Pre-release")
 
     def test_preview_only_installation_waits_after_disabling_previews(self) -> None:
         info = self.release_info()

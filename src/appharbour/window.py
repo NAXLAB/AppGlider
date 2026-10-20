@@ -67,7 +67,6 @@ from appharbour.releases import (
     cached_release,
     check_cancel,
     latest_release,
-    version_key,
 )
 from appharbour.repositories_dialog import RepositoriesDialog
 from appharbour.version_label import VersionLabel
@@ -163,8 +162,6 @@ class AppCard(QFrame):
         self.available_row.addWidget(self.available_version, stretch=1)
         self.available_row.addWidget(self.update_button)
         layout.addLayout(self.available_row)
-        self.other_version = VersionLabel()
-        layout.addWidget(self.other_version)
         self.installed_version = VersionLabel()
         self.status = self.installed_version.text
         self.installed_row = QHBoxLayout()
@@ -228,14 +225,13 @@ class AppCard(QFrame):
             and not newer
             and (release is None or release.version != installed.version)
         )
-        self.available_version.setVisible(bool(newer or waiting or not installed))
+        self.available_version.setVisible(bool(newer or not installed))
         if release:
-            label = "Update" if newer else "Stable" if waiting else "Available"
             self.available_version.set_version(
                 f"v{release.version}",
                 release.prerelease,
                 release.is_latest,
-                caption=label,
+                caption="Update" if newer else "Available",
             )
         else:
             choice = info.choice(self.app.include_prereleases) if info else None
@@ -251,38 +247,18 @@ class AppCard(QFrame):
                 else "Release not checked"
             )
         self.available_version.setToolTip(error)
-        other = None
-        if info:
-            if self.app.include_prereleases and info.choice(True) is not info.stable:
-                other = info.stable
-            elif info.preview and (
-                info.stable is None or info.preview.version != info.stable.version
-            ):
-                stable = info.stable
-                if stable is None or version_key(info.preview.version) > version_key(
-                    stable.version
-                ):
-                    other = info.preview
-        if other and installed and other.version == installed.version:
-            other = None
-        self.other_version.setVisible(other is not None)
-        if other is not None:
-            if other.release:
-                self.other_version.set_version(
-                    f"{'Preview' if other.release.prerelease else 'Stable'} · v{other.version}",
-                    other.release.prerelease,
-                    other.release.is_latest,
-                )
-            else:
-                self.other_version.set_version(f"Preview v{other.version} unavailable")
-            self.other_version.setToolTip(other.error)
         self.installed_version.setVisible(installed is not None)
         if installed:
             latest = info.stable.release if info and info.stable else release
             self.installed_version.set_version(
                 f"v{installed.version}" if installed.version else "Unknown",
-                installed.prerelease,
-                bool(latest and latest.version == installed.version and latest.is_latest),
+                installed.prerelease and not newer,
+                bool(
+                    not newer
+                    and latest
+                    and latest.version == installed.version
+                    and latest.is_latest
+                ),
                 caption="Installed",
             )
             self.status.setToolTip(f"Installed with AppHarbour\n{installed.path}")
@@ -613,8 +589,8 @@ class LauncherWindow(QMainWindow):
         self.setCentralWidget(body)
         header = QHBoxLayout()
         logo = QLabel()
-        logo.setPixmap(self.windowIcon().pixmap(56, 56))
-        logo.setFixedSize(56, 56)
+        logo.setPixmap(self.windowIcon().pixmap(96, 96))
+        logo.setFixedSize(96, 96)
         logo.setAccessibleName(APP_NAME)
         header.addWidget(logo)
         titles = QVBoxLayout()
@@ -629,8 +605,9 @@ class LauncherWindow(QMainWindow):
         self.version_button = QPushButton(f"v{APP_VERSION}")
         self.version_button.setObjectName("versionButton")
         self.version_button.setAccessibleName(f"About AppHarbour {APP_VERSION}")
+        self.version_button.setToolTip("About AppHarbour")
+        self.version_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.version_button.clicked.connect(lambda: self.open_settings(3))
-        header.addWidget(self.version_button)
         settings_button = QPushButton("Settings")
         settings_button.clicked.connect(lambda: self.open_settings())
         header.addWidget(settings_button)
@@ -689,6 +666,7 @@ class LauncherWindow(QMainWindow):
         self.cancel_button.clicked.connect(self.cancel_task)
         self.cancel_button.hide()
         progress_row.addWidget(self.cancel_button)
+        progress_row.addWidget(self.version_button)
         layout.addLayout(progress_row)
         self.cards = {app.id: self.create_card(app) for app in self.apps}
         self.search.textChanged.connect(self.refresh)
@@ -1290,7 +1268,10 @@ class LauncherWindow(QMainWindow):
                 border-color: {"#3c8159" if dark else "#89bd9b"}; }}
             QLabel#releaseBadge[release="prerelease"] {{ color: {"#f0c46e" if dark else "#895b00"};
                 border-color: {"#96753b" if dark else "#c7a660"}; }}
-            QPushButton#versionButton {{ background: transparent; border: none; color: {muted}; }}
+            QPushButton#versionButton {{ background: transparent; border: 1px solid transparent;
+                color: {muted}; font-size: 12px; padding: 5px 10px; }}
+            QPushButton#versionButton:hover, QPushButton#versionButton:focus {{
+                background: {surface}; border-color: {accent}; color: {accent}; }}
             QListWidget#settingsSections {{ border: none; background: transparent; outline: 0; }}
             QListWidget#settingsSections::item {{ padding: 12px; border-radius: 7px; }}
             QListWidget#settingsSections::item:selected {{

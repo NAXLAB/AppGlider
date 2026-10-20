@@ -10,7 +10,8 @@ GitHub repositories in one place.
 
 Example library with [UltiMaker Cura](https://github.com/Ultimaker/Cura),
 [LightCraft Classic](https://github.com/emmertex/lightcraft-classic) and
-[Mitcad](https://github.com/mitcad/Mitcad) added from GitHub. Versions shown are illustrative.
+[Mitcad](https://github.com/mitcad/Mitcad) added from GitHub with their repository icons.
+Versions shown are illustrative.
 
 ## Features
 
