@@ -39,6 +39,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QListWidget,
+    QListWidgetItem,
     QMainWindow,
     QMenu,
     QMessageBox,
@@ -59,7 +60,7 @@ from appharbour import APP_ICON, APP_NAME, APP_VERSION, github_status
 from appharbour.catalog import APPS, App
 from appharbour.icons import icon_pixmap
 from appharbour.jobs import Task, TaskResult
-from appharbour.library import Installed, Library
+from appharbour.library import Installed, Library, Orphan
 from appharbour.release_checks import ReleaseChecks
 from appharbour.release_info import (
     ReleaseInfo,
@@ -486,6 +487,48 @@ class DetailsDialog(QDialog):
         self.check_button.setText("Check releases")
 
 
+class OrphansDialog(QDialog):
+    """Offer to forget library entries for unknown apps; keeping them changes nothing."""
+
+    def __init__(self, orphans: list[Orphan], parent: QWidget) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Unrecognised library entries")
+        self.setMinimumWidth(560)
+        layout = QVBoxLayout(self)
+        intro = QLabel(
+            "These entries are in your AppHarbour library but match no application in the "
+            "current catalog, for example a repository that was removed. They are kept "
+            "untouched unless you tick them. Forgetting an entry never deletes files."
+        )
+        intro.setWordWrap(True)
+        layout.addWidget(intro)
+        self.entries = QListWidget()
+        self.entries.setAccessibleName("Unrecognised entries")
+        for orphan in orphans:
+            version = f" v{orphan.version}" if orphan.version else ""
+            item = QListWidgetItem(f"{orphan.app_id}{version} · {orphan.path}")
+            item.setData(Qt.ItemDataRole.UserRole, orphan.app_id)
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            item.setCheckState(Qt.CheckState.Unchecked)
+            self.entries.addItem(item)
+        layout.addWidget(self.entries)
+        buttons = QDialogButtonBox()
+        self.forget_button = buttons.addButton(
+            "Forget ticked entries", QDialogButtonBox.ButtonRole.AcceptRole
+        )
+        buttons.addButton("Keep all", QDialogButtonBox.ButtonRole.RejectRole)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def selected(self) -> set[str]:
+        return {
+            str(item.data(Qt.ItemDataRole.UserRole))
+            for row in range(self.entries.count())
+            if (item := self.entries.item(row)).checkState() == Qt.CheckState.Checked
+        }
+
+
 class SettingsDialog(QDialog):
     repositories_requested = Signal()
 
@@ -773,6 +816,11 @@ class LauncherWindow(QMainWindow):
         self.cancel_button.clicked.connect(self.cancel_task)
         self.cancel_button.hide()
         progress_row.addWidget(self.cancel_button)
+        self.orphans: list[Orphan] = []
+        self.orphans_button = QPushButton()
+        self.orphans_button.clicked.connect(self.review_orphans)
+        self.orphans_button.hide()
+        progress_row.addWidget(self.orphans_button)
         self.github_button = QPushButton()
         self.github_button.setObjectName("githubStatus")
         self.github_button.setAccessibleName("GitHub request status")
@@ -983,6 +1031,18 @@ class LauncherWindow(QMainWindow):
     def choose_build(self, app_id: str) -> None:
         self.open_repositories(app_id=app_id, choose_build=True)
 
+    def review_orphans(self) -> None:
+        if self.task is not None:
+            return
+        dialog = OrphansDialog(self.orphans, self)
+        if dialog.exec() == QDialog.DialogCode.Accepted and dialog.selected():
+            try:
+                self.library.discard_orphans(dialog.selected())
+            except (OSError, ValueError) as error:
+                QMessageBox.warning(self, "Cannot update the library", str(error))
+            self.scan_installed()
+        dialog.deleteLater()
+
     def open_repositories(
         self, adding: bool = False, app_id: str | None = None, *, choose_build: bool = False
     ) -> None:
@@ -1023,9 +1083,15 @@ class LauncherWindow(QMainWindow):
         try:
             apps = self.library.apps
             installed = self.library.scan()
+            orphans = self.library.orphans()
         except (OSError, ValueError) as error:
             self.footer.setText(str(error))
         else:
+            self.orphans = orphans
+            self.orphans_button.setVisible(bool(orphans))
+            self.orphans_button.setText(
+                f"Review {len(orphans)} unrecognised {'entry' if len(orphans) == 1 else 'entries'}…"
+            )
             if apps != self.apps:
                 for app_id in set(self.cards) - {app.id for app in apps}:
                     self.cards.pop(app_id).deleteLater()

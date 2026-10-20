@@ -14,7 +14,7 @@ from threading import Event, Thread
 from unittest.mock import patch
 
 from appharbour.catalog import APPS
-from appharbour.library import Installed, Library, check_appimage, desktop_exec
+from appharbour.library import Installed, Library, Orphan, check_appimage, desktop_exec
 from appharbour.releases import (
     Cancelled,
     Release,
@@ -553,6 +553,32 @@ class LibraryTests(unittest.TestCase):
         with self.assertRaisesRegex(OSError, "another application"):
             self.library.create_launcher_shortcut([sys.executable, "-O", "-m", "appharbour"])
         self.assertIn("Someone else's shortcut", shortcut.read_text())
+
+    def test_unrecognised_entries_are_preserved_until_explicitly_discarded(self) -> None:
+        self.install("1.0.0")
+        state = self.library.data_dir / "library.json"
+        entries = json.loads(state.read_text())
+        orphan = {"path": "/gone/Old.AppImage", "version": "2.0", "managed": True}
+        entries["old-app"] = orphan
+        atomic_json(state, entries)
+        self.assertEqual(set(self.library.records()), {APP.id})
+        self.assertEqual(self.library.orphans(), [Orphan("old-app", "/gone/Old.AppImage", "2.0")])
+        self.install("1.1.0")
+        self.assertEqual(json.loads(state.read_text())["old-app"], orphan)
+        self.library.discard_orphans({"unrelated"})
+        self.assertEqual(len(self.library.orphans()), 1)
+        self.library.discard_orphans({"old-app"})
+        self.assertEqual(self.library.orphans(), [])
+        self.assertEqual(set(json.loads(state.read_text())), {APP.id})
+        self.assertEqual(self.library.records()[APP.id].version, "1.1.0")
+
+    def test_malformed_entries_still_fail_without_rewriting_the_file(self) -> None:
+        state = self.library.data_dir / "library.json"
+        state.parent.mkdir(parents=True, exist_ok=True)
+        state.write_text('{"old-app": "not an object"}')
+        with self.assertRaisesRegex(ValueError, "preserved"):
+            self.library.records()
+        self.assertEqual(state.read_text(), '{"old-app": "not an object"}')
 
     def test_refresh_keeps_a_working_shortcut_unless_a_newer_image_takes_over(self) -> None:
         old, new = Path(self.temp.name) / "old.AppImage", Path(self.temp.name) / "new.AppImage"

@@ -19,6 +19,7 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
+    QDialog,
     QFileDialog,
     QLabel,
     QLineEdit,
@@ -39,7 +40,7 @@ from appharbour.release_info import ReleaseInfo, ReleaseOption, info_path
 from appharbour.releases import Release
 from appharbour.repositories_dialog import RepositoriesDialog
 from appharbour.storage import atomic_json
-from appharbour.window import DetailsDialog, LauncherWindow, SettingsDialog
+from appharbour.window import DetailsDialog, LauncherWindow, OrphansDialog, SettingsDialog
 
 
 class LibraryTests(unittest.TestCase):
@@ -603,6 +604,27 @@ class LibraryTests(unittest.TestCase):
             self.assertEqual(pool.return_value.start.call_count, 1)
         self.assertFalse(self.window.checks.busy)
         self.assertFalse(self.window.checks.queue)
+
+    def test_unrecognised_entries_can_be_reviewed_kept_or_forgotten(self) -> None:
+        state = self.window.library.data_dir / "library.json"
+        atomic_json(state, {"old-app": {"path": "/gone/Old.AppImage", "version": "2.0"}})
+        self.window.scan_installed()
+        self.assertFalse(self.window.orphans_button.isHidden())
+        self.assertIn("1 unrecognised entry", self.window.orphans_button.text())
+        for accepted, ticked, remaining in ((False, True, 1), (True, False, 1), (True, True, 0)):
+
+            def choose(dialog: OrphansDialog) -> QDialog.DialogCode:
+                state = Qt.CheckState.Checked if ticked else Qt.CheckState.Unchecked
+                dialog.entries.item(0).setCheckState(state)
+                return QDialog.DialogCode.Accepted if accepted else QDialog.DialogCode.Rejected
+
+            with (
+                self.subTest(accepted=accepted, ticked=ticked),
+                patch.object(OrphansDialog, "exec", choose),
+            ):
+                self.window.review_orphans()
+            self.assertEqual(len(self.window.library.orphans()), remaining)
+        self.assertTrue(self.window.orphans_button.isHidden())
 
     def test_release_checks_overlap_only_when_quota_is_plentiful(self) -> None:
         other = APPS[1]

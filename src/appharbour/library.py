@@ -58,6 +58,15 @@ def desktop_exec(arguments: list[str]) -> str:
 
 
 @dataclass(frozen=True)
+class Orphan:
+    """A library entry for an application this catalog does not currently know."""
+
+    app_id: str
+    path: str
+    version: str
+
+
+@dataclass(frozen=True)
 class Installed:
     path: Path
     version: str | None
@@ -237,7 +246,7 @@ class Library:
             [{"repo": app.repo, "name": app.name} for app in apps],
         )
 
-    def records(self) -> dict[str, Installed]:
+    def _entries(self) -> dict[str, object]:
         path = self.data_dir / "library.json"
         if not path.exists():
             return {}
@@ -247,11 +256,40 @@ class Library:
             data = json.loads(path.read_text())
             if not isinstance(data, dict):
                 raise ValueError("Invalid library records.")
+        except (OSError, ValueError) as error:
+            raise ValueError(f"Cannot read {path}. The file was preserved: {error}") from error
+        return data
+
+    def _orphan_entries(self) -> dict[str, dict[str, object]]:
+        known_ids = {app.id for app in self.apps}
+        return {
+            app_id: item
+            for app_id, item in self._entries().items()
+            if app_id not in known_ids and isinstance(item, dict)
+        }
+
+    def orphans(self) -> list[Orphan]:
+        return [
+            Orphan(app_id, str(item.get("path", ""))[:512], str(item.get("version") or "")[:128])
+            for app_id, item in self._orphan_entries().items()
+        ]
+
+    def discard_orphans(self, app_ids: set[str]) -> None:
+        """Forget the listed unrecognised entries; their files on disk are never touched."""
+        with self._lock():
+            self._save(self.records(), drop=app_ids)
+
+    def records(self) -> dict[str, Installed]:
+        path = self.data_dir / "library.json"
+        data = self._entries()
+        try:
             known_ids = {app.id for app in self.apps}
             result = {}
             for app_id, item in data.items():
-                if app_id not in known_ids or not isinstance(item, dict):
-                    raise ValueError("Unrecognised library entry.")
+                if not isinstance(item, dict):
+                    raise ValueError("Invalid library entry.")
+                if app_id not in known_ids:
+                    continue  # kept in the file by _save until the user discards it
                 location, version = item.get("path"), item.get("version")
                 previous, managed = item.get("previous"), item.get("managed")
                 prerelease = item.get("prerelease", False)
@@ -288,21 +326,22 @@ class Library:
         except (OSError, ValueError) as error:
             raise ValueError(f"Cannot read {path}. The file was preserved: {error}") from error
 
-    def _save(self, records: dict[str, Installed]) -> None:
-        atomic_json(
-            self.data_dir / "library.json",
-            {
-                app_id: {
-                    "path": str(item.path),
-                    "version": item.version,
-                    "managed": item.managed,
-                    "previous": str(item.previous) if item.previous else None,
-                    "prerelease": item.prerelease,
-                    "previous_prerelease": item.previous_prerelease,
-                }
-                for app_id, item in records.items()
-            },
-        )
+    def _save(self, records: dict[str, Installed], drop: set[str] | None = None) -> None:
+        saved: dict[str, object] = {
+            app_id: item
+            for app_id, item in self._orphan_entries().items()
+            if app_id not in (drop or ())
+        }
+        for app_id, item in records.items():
+            saved[app_id] = {
+                "path": str(item.path),
+                "version": item.version,
+                "managed": item.managed,
+                "previous": str(item.previous) if item.previous else None,
+                "prerelease": item.prerelease,
+                "previous_prerelease": item.previous_prerelease,
+            }
+        atomic_json(self.data_dir / "library.json", saved)
 
     @contextlib.contextmanager
     def _lock(self, timeout: float = LOCK_WAIT_SECONDS) -> Iterator[None]:
