@@ -8,16 +8,17 @@ GitHub repositories in one place.
 
 ![AppHarbour in dark mode with built-in apps and added GitHub repositories](docs/previews/appharbour-dark.png)
 
-Dark mode with [LightCraft Classic](https://github.com/emmertex/lightcraft-classic),
-[Mitcad](https://github.com/mitcad/Mitcad) and
-[EarthCraft](https://github.com/therichronicles/EarthCraft) added from GitHub.
+Example library with [UltiMaker Cura](https://github.com/Ultimaker/Cura),
+[LightCraft Classic](https://github.com/emmertex/lightcraft-classic) and
+[Mitcad](https://github.com/mitcad/Mitcad) added from GitHub. Versions shown are illustrative.
 
 ## Features
 
 - Install and launch applications from a searchable card library.
-- Check for updates, update installed apps and roll back to the previous version.
+- Discover releases in the background, update installed apps and roll back to the previous version.
 - Verify downloads against published SHA-256 checksums before installation.
-- Add supported GitHub repositories from Settings.
+- Add supported GitHub repositories directly from the library.
+- Choose stable releases or include previews from each card’s menu, with release badges before installation.
 - Discover their application icons or choose a local PNG/SVG, with offline icon storage.
 - Create application-menu shortcuts and access the launcher from the system tray.
 
@@ -28,11 +29,11 @@ left alone. **Installed (N)** and **Updates (N)** show library totals, even whil
 
 The AppHarbour AppImage includes Python and Qt. Use a release AppImage, or follow the
 [build instructions](docs/development.md#build-the-appimage) to create one locally.
-For version 0.1.3:
+For version 0.2.0:
 
 ```sh
-chmod +x AppHarbour-0.1.3-linux-x86_64.AppImage
-./AppHarbour-0.1.3-linux-x86_64.AppImage
+chmod +x AppHarbour-0.2.0-linux-x86_64.AppImage
+./AppHarbour-0.2.0-linux-x86_64.AppImage
 ```
 
 Keep the file in a permanent location: AppHarbour creates a menu shortcut pointing to it.
@@ -45,12 +46,14 @@ Applications downloaded through AppHarbour may have their own runtime requiremen
 
 ## Add an application
 
-1. Open **Settings → Repositories… → Add repository**.
+1. Choose **+ Add app** above the library.
 2. Enter a public GitHub repository URL and an optional display name.
-3. Choose **Inspect repository**, review the release, then **Add to library**.
-4. Use **Install** on its new card.
+3. Leave **Stable releases only** selected, or opt into prereleases.
+4. Choose **Inspect repository**, review the release, then **Add to library**.
+5. Use **Install** on its new card.
 
-Repositories need a supported stable release and an AppImage with a published checksum.
+Repositories need a supported release and an AppImage with a published checksum.
+Stable releases are the default; prerelease-only projects require explicit opt-in.
 AppImage filenames can use different branding and layouts; downloads are matched to your CPU.
 See the [usage guide](docs/usage.md) for supported names, updates and desktop integration.
 

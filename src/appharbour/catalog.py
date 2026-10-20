@@ -2,7 +2,7 @@
 
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -18,6 +18,7 @@ class App:
     description: str
     repo: str
     asset_stem: str = ""
+    include_prereleases: bool = False
 
     @property
     def icon(self) -> Path:
@@ -51,7 +52,9 @@ APPS = (
 )
 
 
-def custom_app(repository: str, name: str | None = None) -> App:
+def custom_app(repository: str, name: str | None = None, include_prereleases: bool = False) -> App:
+    if type(include_prereleases) is not bool:
+        raise ValueError("The release preference must be true or false.")
     value = repository.strip()
     if any(ord(c) < 32 or ord(c) == 127 for c in value):
         raise ValueError("The repository address contains control characters.")
@@ -77,11 +80,39 @@ def custom_app(repository: str, name: str | None = None) -> App:
     if not title or len(title) > 128 or any(ord(c) < 32 or ord(c) == 127 for c in title):
         raise ValueError("Use an application name of 1–128 characters, without control characters.")
     return App(
-        f"github-{owner}__{slug}", title, f"AppImage from {owner}/{slug}", f"{owner}/{slug}", slug
+        f"github-{owner}__{slug}",
+        title,
+        f"AppImage from {owner}/{slug}",
+        f"{owner}/{slug}",
+        slug,
+        include_prereleases,
     )
 
 
-def load_apps(path: Path) -> tuple[App, ...]:
+def load_release_preferences(path: Path) -> dict[str, bool]:
+    if not path.exists():
+        return {}
+    try:
+        if path.stat().st_size > 1024 * 1024:
+            raise ValueError("The release preferences file is too large.")
+        data = json.loads(path.read_text())
+        if not isinstance(data, dict) or any(
+            not isinstance(key, str) or len(key) > 256 or type(value) is not bool
+            for key, value in data.items()
+        ):
+            raise ValueError("Invalid release preferences.")
+        return data
+    except (OSError, ValueError) as error:
+        raise ValueError(f"Cannot read {path}. The file was preserved: {error}") from error
+
+
+def load_apps(path: Path, preferences_path: Path | None = None) -> tuple[App, ...]:
+    apps = _load_apps(path)
+    preferences = load_release_preferences(preferences_path) if preferences_path else {}
+    return tuple(replace(app, include_prereleases=preferences.get(app.id, False)) for app in apps)
+
+
+def _load_apps(path: Path) -> tuple[App, ...]:
     if not path.exists():
         return APPS
     try:

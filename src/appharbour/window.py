@@ -1,6 +1,7 @@
 """Card library, installed applications and background installation controls."""
 
 from collections.abc import Callable
+from datetime import datetime
 from pathlib import Path
 from threading import Event
 
@@ -25,6 +26,7 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import (
     QApplication,
+    QCheckBox,
     QComboBox,
     QDialog,
     QDialogButtonBox,
@@ -36,6 +38,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QListWidget,
     QMainWindow,
     QMenu,
     QMessageBox,
@@ -43,6 +46,8 @@ from PySide6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSizePolicy,
+    QStackedWidget,
+    QStyledItemDelegate,
     QSystemTrayIcon,
     QTabBar,
     QToolButton,
@@ -50,13 +55,24 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from appharbour import APP_ICON, APP_NAME
+from appharbour import APP_ICON, APP_NAME, APP_VERSION
 from appharbour.catalog import APPS, App
 from appharbour.icons import icon_pixmap
 from appharbour.jobs import Task, TaskResult
 from appharbour.library import Installed, Library
-from appharbour.releases import Progress, Release, check_cancel, latest_release
+from appharbour.release_info import ReleaseInfo, cached_info, discover_releases, remember_release
+from appharbour.releases import (
+    Progress,
+    Release,
+    cached_release,
+    check_cancel,
+    latest_release,
+    version_key,
+)
 from appharbour.repositories_dialog import RepositoriesDialog
+from appharbour.version_label import VersionLabel
+
+CARD_MIN_WIDTH = 300
 
 
 def icon_label(app: App, size: int, path: Path | None = None) -> QLabel:
@@ -74,27 +90,43 @@ class AppCard(QFrame):
     shortcut_requested = Signal(str)
     rollback_requested = Signal(str)
     remove_requested = Signal(str)
+    preferences_requested = Signal(str)
 
     def __init__(self, app: App, icon_path: Path | None = None) -> None:
         super().__init__()
         self.app = app
         self.installed: Installed | None = None
         self.setObjectName("appCard")
-        self.setMinimumWidth(250)
-        self.setFixedHeight(248)
-        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.setMinimumWidth(CARD_MIN_WIDTH)
+        self.setMinimumHeight(200)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(22, 20, 22, 20)
-        layout.setSpacing(10)
+        layout.setContentsMargins(14, 14, 14, 14)
+        layout.setSpacing(6)
         top = QHBoxLayout()
-        self.icon = icon_label(app, 52, icon_path)
-        top.addWidget(self.icon)
-        top.addStretch()
+        self.icon = icon_label(app, 40, icon_path)
+        top.addWidget(self.icon, alignment=Qt.AlignmentFlag.AlignTop)
+        identity = QVBoxLayout()
+        identity.setSpacing(3)
+        name = QPushButton(app.name)
+        name.setObjectName("appName")
+        name.setAccessibleName(f"View {app.name} details")
+        name.setToolTip(app.name)
+        name.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        name.setCursor(Qt.CursorShape.PointingHandCursor)
+        name.clicked.connect(lambda: self.details_requested.emit(app.id))
+        identity.addWidget(name)
+        description = QLabel(app.description)
+        description.setObjectName("cardDescription")
+        description.setWordWrap(True)
+        description.setMinimumWidth(0)
+        identity.addWidget(description)
+        top.addLayout(identity, stretch=1)
         self.update_button = QPushButton("Update")
+        self.update_button.setObjectName("cardAction")
         self.update_button.setAccessibleName(f"Update {app.name}")
         self.update_button.clicked.connect(lambda: self.install_requested.emit(app.id))
         self.update_button.hide()
-        top.addWidget(self.update_button, alignment=Qt.AlignmentFlag.AlignTop)
         more = QToolButton()
         more.setText("⋯")
         more.setObjectName("cardMenu")
@@ -108,6 +140,8 @@ class AppCard(QFrame):
         menu.addAction("Open repository").triggered.connect(
             lambda: QDesktopServices.openUrl(QUrl(app.source_url))
         )
+        self.preferences_action = menu.addAction("Release preferences…")
+        self.preferences_action.triggered.connect(lambda: self.preferences_requested.emit(app.id))
         menu.addSeparator()
         self.shortcut_action = menu.addAction("Create/repair menu shortcut")
         self.shortcut_action.triggered.connect(lambda: self.shortcut_requested.emit(app.id))
@@ -118,26 +152,33 @@ class AppCard(QFrame):
         more.setMenu(menu)
         top.addWidget(more, alignment=Qt.AlignmentFlag.AlignTop)
         layout.addLayout(top)
-        name = QPushButton(app.name)
-        name.setObjectName("appName")
-        name.setAccessibleName(f"View {app.name} details")
-        name.setCursor(Qt.CursorShape.PointingHandCursor)
-        name.clicked.connect(lambda: self.details_requested.emit(app.id))
-        layout.addWidget(name, alignment=Qt.AlignmentFlag.AlignLeft)
-        description = QLabel(app.description)
-        description.setObjectName("muted")
-        description.setWordWrap(True)
-        layout.addWidget(description)
         layout.addStretch()
-        bottom = QHBoxLayout()
-        self.status = QLabel()
-        self.status.setObjectName("status")
-        bottom.addWidget(self.status)
-        bottom.addStretch()
+        divider = QFrame()
+        divider.setObjectName("cardDivider")
+        divider.setFixedHeight(1)
+        layout.addWidget(divider)
+        self.available_version = VersionLabel()
+        self.available_row = QHBoxLayout()
+        self.available_row.setSpacing(8)
+        self.available_row.addWidget(self.available_version, stretch=1)
+        self.available_row.addWidget(self.update_button)
+        layout.addLayout(self.available_row)
+        self.other_version = VersionLabel()
+        layout.addWidget(self.other_version)
+        self.installed_version = VersionLabel()
+        self.status = self.installed_version.text
+        self.installed_row = QHBoxLayout()
+        self.installed_row.setSpacing(8)
+        self.installed_row.addWidget(self.installed_version, stretch=1)
+        layout.addLayout(self.installed_row)
         self.action_button = QPushButton()
+        self.action_button.setObjectName("cardAction")
         self.action_button.clicked.connect(self.activate)
-        bottom.addWidget(self.action_button)
-        layout.addLayout(bottom)
+        self.available_row.addWidget(self.action_button)
+        self.checked = QLabel("Release information not checked")
+        self.checked.setObjectName("cardChecked")
+        self.checked.setWordWrap(True)
+        layout.addWidget(self.checked)
 
     def activate(self) -> None:
         if self.installed is not None:
@@ -146,9 +187,19 @@ class AppCard(QFrame):
             self.install_requested.emit(self.app.id)
 
     def set_state(
-        self, installed: Installed | None, release: Release | None, busy: bool, error: str = ""
+        self,
+        installed: Installed | None,
+        release: Release | None,
+        busy: bool,
+        error: str = "",
+        info: ReleaseInfo | None = None,
+        refreshing: bool = False,
+        refresh_error: str = "",
     ) -> None:
         self.installed = installed
+        action_row = self.installed_row if installed else self.available_row
+        if action_row.indexOf(self.action_button) < 0:
+            action_row.addWidget(self.action_button)
         newer = bool(installed and release and release.newer_than(installed.version))
         self.action_button.setText("Launch" if installed else "Install")
         self.action_button.setAccessibleName(
@@ -168,19 +219,95 @@ class AppCard(QFrame):
         self.shortcut_action.setEnabled(bool(not busy and installed and installed.managed))
         self.update_button.setVisible(newer)
         self.update_button.setEnabled(not busy)
-        if installed:
-            version = f" · v{installed.version}" if installed.version else ""
-            self.status.setText(
-                f"Update available\nv{installed.version} → v{release.version}"
-                if newer and release
-                else "Installed" + version
+        self.preferences_action.setEnabled(not busy)
+        waiting = bool(
+            installed
+            and installed.prerelease
+            and not self.app.include_prereleases
+            and (info is not None or release is not None)
+            and not newer
+            and (release is None or release.version != installed.version)
+        )
+        self.available_version.setVisible(bool(newer or waiting or not installed))
+        if release:
+            label = "Update" if newer else "Stable" if waiting else "Available"
+            self.available_version.set_version(
+                f"v{release.version}",
+                release.prerelease,
+                release.is_latest,
+                caption=label,
             )
-            self.status.setToolTip(f"Installed with AppHarbour\n{installed.path}\n{error}".strip())
-            self.action_button.setToolTip(f"Launch {installed.path}")
         else:
-            self.status.setText(f"Available · v{release.version}" if release else "Not installed")
-            self.status.setToolTip(error)
-            self.action_button.setToolTip("Download and verify the latest stable AppImage")
+            choice = info.choice(self.app.include_prereleases) if info else None
+            self.available_version.set_version(
+                f"v{choice.version} unavailable"
+                if choice
+                else "Only previews available"
+                if info and info.stable is None
+                else "Release unavailable"
+                if error or refresh_error
+                else "Checking releases…"
+                if refreshing
+                else "Release not checked"
+            )
+        self.available_version.setToolTip(error)
+        other = None
+        if info:
+            if self.app.include_prereleases and info.choice(True) is not info.stable:
+                other = info.stable
+            elif info.preview and (
+                info.stable is None or info.preview.version != info.stable.version
+            ):
+                stable = info.stable
+                if stable is None or version_key(info.preview.version) > version_key(
+                    stable.version
+                ):
+                    other = info.preview
+        if other and installed and other.version == installed.version:
+            other = None
+        self.other_version.setVisible(other is not None)
+        if other is not None:
+            if other.release:
+                self.other_version.set_version(
+                    f"{'Preview' if other.release.prerelease else 'Stable'} · v{other.version}",
+                    other.release.prerelease,
+                    other.release.is_latest,
+                )
+            else:
+                self.other_version.set_version(f"Preview v{other.version} unavailable")
+            self.other_version.setToolTip(other.error)
+        self.installed_version.setVisible(installed is not None)
+        if installed:
+            latest = info.stable.release if info and info.stable else release
+            self.installed_version.set_version(
+                f"v{installed.version}" if installed.version else "Unknown",
+                installed.prerelease,
+                bool(latest and latest.version == installed.version and latest.is_latest),
+                caption="Installed",
+            )
+            self.status.setToolTip(f"Installed with AppHarbour\n{installed.path}")
+        stamp = datetime.fromtimestamp(info.checked_at).strftime("%d %b, %H:%M") if info else ""
+        if refreshing:
+            checked = "Refreshing releases…"
+        elif refresh_error:
+            checked = f"Refresh failed · checked {stamp}" if stamp else "Release check failed"
+        elif waiting:
+            checked = "Waiting for a newer stable release"
+        elif info:
+            checked = f"Checked {stamp}" + (" · refresh needed" if not info.fresh() else "")
+        else:
+            checked = "Release information not checked"
+        self.checked.setText(checked)
+        self.checked.setToolTip(
+            refresh_error or error or (f"Last checked {stamp}" if stamp else "")
+        )
+        if not installed and info:
+            self.action_button.setEnabled(not busy and release is not None)
+        self.action_button.setToolTip(
+            f"Launch {installed.path}"
+            if installed
+            else error or "Download and verify the selected AppImage release"
+        )
         if release:
             self.update_button.setToolTip(
                 f"Update to v{release.version}; keep the previous version"
@@ -208,11 +335,15 @@ class CardGrid(QWidget):
             self.layout_grid.takeAt(0)
         for column in range(self.columns):
             self.layout_grid.setColumnStretch(column, 0)
-        self.columns = max(1, (width + 16) // 286)
+        for row in range(self.layout_grid.rowCount()):
+            self.layout_grid.setRowStretch(row, 0)
+        self.columns = max(1, (width + 16) // (CARD_MIN_WIDTH + 16))
         for index, card in enumerate(self.cards):
             self.layout_grid.addWidget(card, index // self.columns, index % self.columns)
         for column in range(self.columns):
             self.layout_grid.setColumnStretch(column, 1)
+        rows = (len(self.cards) + self.columns - 1) // self.columns
+        self.layout_grid.setRowStretch(rows, 1)
 
 
 class DetailsDialog(QDialog):
@@ -224,6 +355,7 @@ class DetailsDialog(QDialog):
         release: Release | None = None,
         error: str = "",
         icon_path: Path | None = None,
+        release_info: ReleaseInfo | None = None,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle(f"About {app.name}")
@@ -246,11 +378,44 @@ class DetailsDialog(QDialog):
         repo.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         info.addRow("Repository", repo)
         info.addRow("Format", QLabel("Linux AppImage"))
-        info.addRow(
-            "Installed version",
-            QLabel(installed.version or "Unknown" if installed else "Not installed"),
+        installed_label = VersionLabel()
+        latest = release_info.stable.release if release_info and release_info.stable else release
+        installed_label.set_version(
+            installed.version or "Unknown" if installed else "Not installed",
+            bool(installed and installed.prerelease),
+            bool(installed and latest and installed.version == latest.version and latest.is_latest),
         )
-        info.addRow("Latest version", QLabel(release.version if release else "Not checked"))
+        info.addRow("Installed version", installed_label)
+        available_label = VersionLabel()
+        available_label.set_version(
+            release.version if release else "Not checked",
+            bool(release and release.prerelease),
+            bool(release and release.is_latest),
+        )
+        info.addRow("Available release", available_label)
+        info.addRow(
+            "Release preference",
+            QLabel(
+                "Stable and prerelease versions"
+                if app.include_prereleases
+                else "Stable releases only"
+            ),
+        )
+        if release_info:
+            for label, option in (
+                ("Stable release", release_info.stable),
+                ("Preview release", release_info.preview),
+            ):
+                if option is None or (release and option.version == release.version):
+                    continue
+                version_label = VersionLabel()
+                version_label.set_version(
+                    option.version + (" · unavailable" if option.release is None else ""),
+                    bool(option.release and option.release.prerelease),
+                    bool(option.release and option.release.is_latest),
+                )
+                version_label.setToolTip(option.error)
+                info.addRow(label, version_label)
         if installed:
             location = QLabel(str(installed.path))
             location.setWordWrap(True)
@@ -278,22 +443,49 @@ class SettingsDialog(QDialog):
     def __init__(self, settings: QSettings, parent: QWidget) -> None:
         super().__init__(parent)
         self.setWindowTitle("Settings")
-        self.setMinimumWidth(560)
-        self.resize(600, 520)
+        self.setMinimumWidth(700)
+        self.resize(760, 520)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(24, 24, 24, 24)
         layout.setSpacing(20)
-        title = QLabel("Make AppHarbour yours")
+        title = QLabel("Settings")
         title.setObjectName("dialogTitle")
         layout.addWidget(title)
+        content = QHBoxLayout()
+        self.sections = QListWidget()
+        self.sections.setObjectName("settingsSections")
+        self.sections.setAccessibleName("Settings sections")
+        self.sections.addItems(["General", "Applications", "Storage", "About"])
+        self.sections.setFixedWidth(150)
+        self.pages = QStackedWidget()
+        self.sections.currentRowChanged.connect(self.pages.setCurrentIndex)
+        content.addWidget(self.sections)
+        content.addWidget(self.pages, stretch=1)
+        layout.addLayout(content, stretch=1)
+        page_layouts = []
+        for _ in range(4):
+            page = QWidget()
+            page_layout = QVBoxLayout(page)
+            page_layout.setContentsMargins(12, 0, 0, 0)
+            page_layout.setSpacing(16)
+            self.pages.addWidget(page)
+            page_layouts.append(page_layout)
+        general, applications_page, storage, about = page_layouts
         appearance = QGroupBox("Appearance")
         appearance_form = QFormLayout(appearance)
         self.theme = QComboBox()
+        self.theme.setItemDelegate(QStyledItemDelegate(self.theme))
         self.theme.setAccessibleName("Appearance")
         self.theme.addItems(["System", "Light", "Dark"])
         self.theme.setCurrentText(str(settings.value("appearance/theme", "System")))
         appearance_form.addRow("Colour scheme", self.theme)
-        layout.addWidget(appearance)
+        general.addWidget(appearance)
+        self.close_to_tray = QCheckBox("Keep AppHarbour in the tray when closing its window")
+        self.close_to_tray.setChecked(
+            bool(settings.value("general/close-to-tray", True, type=bool))
+        )
+        self.close_to_tray.setToolTip("Applies when a system tray is available. Use Quit to exit.")
+        general.addWidget(self.close_to_tray)
         downloads = QGroupBox("Downloads")
         download_layout = QVBoxLayout(downloads)
         download_layout.addWidget(QLabel("Install new applications in"))
@@ -316,18 +508,37 @@ class SettingsDialog(QDialog):
         note.setObjectName("muted")
         note.setWordWrap(True)
         download_layout.addWidget(note)
-        layout.addWidget(downloads)
+        storage.addWidget(downloads)
         applications = QGroupBox("Applications")
         application_layout = QHBoxLayout(applications)
-        description = QLabel("Manage repositories and application icons.")
+        description = QLabel(
+            "Choose release preferences, manage repositories and change application icons."
+        )
         description.setObjectName("muted")
         description.setWordWrap(True)
         application_layout.addWidget(description, stretch=1)
         self.repositories_button = QPushButton("Repositories…")
         self.repositories_button.clicked.connect(self.repositories_requested.emit)
         application_layout.addWidget(self.repositories_button)
-        layout.addWidget(applications)
-        layout.addStretch()
+        applications_page.addWidget(applications)
+        app_title = QLabel(f"{APP_NAME} {APP_VERSION}")
+        app_title.setObjectName("sectionTitle")
+        about.addWidget(app_title)
+        about_note = QLabel("A home for your Linux AppImages.\nWritten in Python with Qt.")
+        about_note.setWordWrap(True)
+        about.addWidget(about_note)
+        for caption, url in (
+            ("View AppHarbour on GitHub", "https://github.com/Vyrnexis/AppHarbour"),
+            ("Report an issue", "https://github.com/Vyrnexis/AppHarbour/issues"),
+        ):
+            button = QPushButton(caption)
+            button.clicked.connect(
+                lambda checked=False, url=url: QDesktopServices.openUrl(QUrl(url))
+            )
+            about.addWidget(button)
+        for page_layout in page_layouts:
+            page_layout.addStretch()
+        self.sections.setCurrentRow(0)
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel
         )
@@ -380,6 +591,14 @@ class LauncherWindow(QMainWindow):
         self.apps: tuple[App, ...] = APPS
         self.releases: dict[str, Release] = {}
         self.check_errors: dict[str, str] = {}
+        self.release_infos: dict[str, ReleaseInfo] = {}
+        self.release_errors: dict[str, str] = {}
+        self.release_task: Task | None = None
+        self.release_queue: list[str] = []
+        self.release_checking: str | None = None
+        self.release_force = False
+        self.background_enabled = False
+        self.close_after_release = False
         self.task: Task | None = None
         self.close_after_task = False
         self.quitting = False
@@ -407,16 +626,26 @@ class LauncherWindow(QMainWindow):
         titles.addWidget(subtitle)
         header.addLayout(titles)
         header.addStretch()
+        self.version_button = QPushButton(f"v{APP_VERSION}")
+        self.version_button.setObjectName("versionButton")
+        self.version_button.setAccessibleName(f"About AppHarbour {APP_VERSION}")
+        self.version_button.clicked.connect(lambda: self.open_settings(3))
+        header.addWidget(self.version_button)
+        settings_button = QPushButton("Settings")
+        settings_button.clicked.connect(lambda: self.open_settings())
+        header.addWidget(settings_button)
+        layout.addLayout(header)
+        search_row = QHBoxLayout()
         self.search = QLineEdit()
         self.search.setPlaceholderText("Search apps…")
         self.search.setAccessibleName("Search apps")
         self.search.setClearButtonEnabled(True)
-        self.search.setFixedWidth(245)
-        header.addWidget(self.search)
-        settings_button = QPushButton("Settings")
-        settings_button.clicked.connect(self.open_settings)
-        header.addWidget(settings_button)
-        layout.addLayout(header)
+        search_row.addWidget(self.search, stretch=1)
+        self.add_app_button = QPushButton("+ Add app")
+        self.add_app_button.setObjectName("primary")
+        self.add_app_button.clicked.connect(lambda: self.open_repositories(adding=True))
+        search_row.addWidget(self.add_app_button)
+        layout.addLayout(search_row)
         navigation = QHBoxLayout()
         self.tabs = QTabBar()
         self.tabs.setAccessibleName("Library filters")
@@ -425,14 +654,11 @@ class LauncherWindow(QMainWindow):
             self.tabs.addTab(name)
         navigation.addWidget(self.tabs)
         navigation.addStretch()
-        self.rescan_button = QPushButton("Refresh library")
-        self.rescan_button.clicked.connect(self.scan_installed)
-        navigation.addWidget(self.rescan_button)
         self.update_all_button = QPushButton("Update all")
         self.update_all_button.clicked.connect(self.update_all)
         navigation.addWidget(self.update_all_button)
-        self.check_button = QPushButton("Check updates")
-        self.check_button.clicked.connect(self.check_updates)
+        self.check_button = QPushButton("Refresh releases")
+        self.check_button.clicked.connect(lambda: self.refresh_releases(force=True))
         navigation.addWidget(self.check_button)
         layout.addLayout(navigation)
         self.results = QLabel()
@@ -472,8 +698,8 @@ class LauncherWindow(QMainWindow):
         self.tray = QSystemTrayIcon(self.windowIcon(), self)
         self.tray_menu = QMenu(self)
         self.tray_menu.addAction("Open AppHarbour").triggered.connect(self.show_launcher)
-        self.tray_check_action = self.tray_menu.addAction("Check updates")
-        self.tray_check_action.triggered.connect(self.check_updates)
+        self.tray_check_action = self.tray_menu.addAction("Refresh releases")
+        self.tray_check_action.triggered.connect(lambda: self.refresh_releases(force=True))
         self.tray_apps_menu = self.tray_menu.addMenu("Installed apps")
         self.tray_menu.addSeparator()
         self.tray_menu.addAction("Quit AppHarbour").triggered.connect(self.quit_launcher)
@@ -494,6 +720,7 @@ class LauncherWindow(QMainWindow):
         card.shortcut_requested.connect(self.create_shortcut)
         card.rollback_requested.connect(self.rollback_app)
         card.remove_requested.connect(self.remove_app)
+        card.preferences_requested.connect(lambda app_id: self.open_repositories(app_id=app_id))
         return card
 
     def show_launcher(self) -> None:
@@ -513,13 +740,13 @@ class LauncherWindow(QMainWindow):
     def quit_launcher(self) -> None:
         self.show_launcher()
         self.quitting = True
-        if not self.close() and not self.close_after_task:
+        if not self.close() and not self.close_after_task and not self.close_after_release:
             self.quitting = False
 
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
         if watched is self.scroll_area.viewport() and isinstance(event, QResizeEvent):
             width = event.size().width()
-            if max(1, (width + 16) // 286) != self.grid.columns:
+            if max(1, (width + 16) // (CARD_MIN_WIDTH + 16)) != self.grid.columns:
                 self.grid.reflow(width)
         return super().eventFilter(watched, event)
 
@@ -528,7 +755,7 @@ class LauncherWindow(QMainWindow):
         self.tabs.setTabText(1, f"Installed ({len(self.installed)})")
         self.tabs.setTabText(2, f"Updates ({update_count})")
         self.tray.setToolTip(f"AppHarbour · Updates: {update_count}")
-        self.tray_check_action.setEnabled(self.task is None and bool(self.installed))
+        self.tray_check_action.setEnabled(self.release_task is None and bool(self.apps))
         self.tray_apps_menu.clear()
         self.tray_apps_menu.setEnabled(bool(self.installed))
         for app in self.apps:
@@ -552,16 +779,20 @@ class LauncherWindow(QMainWindow):
         ]
         ids = {app.id for app in visible}
         for app_id, card in self.cards.items():
-            card.icon.setPixmap(icon_pixmap(self.library.icon_path(card.app), 52))
+            card.icon.setPixmap(icon_pixmap(self.library.icon_path(card.app), 40))
             card.set_state(
                 self.installed.get(app_id),
                 self.releases.get(app_id),
                 self.task is not None,
                 self.check_errors.get(app_id, ""),
+                self.release_infos.get(app_id),
+                self.release_checking == app_id,
+                self.release_errors.get(app_id, ""),
             )
             card.setVisible(app_id in ids)
-        self.check_button.setEnabled(self.task is None)
-        self.rescan_button.setEnabled(self.task is None)
+        self.add_app_button.setEnabled(self.task is None)
+        self.check_button.setText("Refreshing…" if self.release_task else "Refresh releases")
+        self.check_button.setEnabled(self.release_task is None)
         self.update_all_button.setVisible(
             any(item.managed and self.has_update(app_id) for app_id, item in self.installed.items())
         )
@@ -585,7 +816,7 @@ class LauncherWindow(QMainWindow):
                 "Your library is empty.\nChoose Install from All apps to get started."
             )
         elif self.tabs.currentIndex() == 2:
-            self.empty.setText("No known updates.\nUse Check updates to look for new releases.")
+            self.empty.setText("No known updates.\nUse Refresh releases to look for new releases.")
         else:
             self.empty.setText("No apps match your search.\nTry another name or clear the search.")
 
@@ -598,21 +829,24 @@ class LauncherWindow(QMainWindow):
             self.releases.get(app_id),
             self.check_errors.get(app_id, ""),
             icon_path=self.library.icon_path(app),
+            release_info=self.release_infos.get(app_id),
         )
         dialog.exec()
 
-    def open_settings(self) -> None:
+    def open_settings(self, section: int = 0) -> None:
         dialog = SettingsDialog(self.settings, self)
+        dialog.sections.setCurrentRow(section)
         dialog.repositories_button.setEnabled(self.task is None)
-        dialog.repositories_requested.connect(self.open_repositories)
+        dialog.repositories_requested.connect(lambda: self.open_repositories())
         if dialog.exec() == QDialog.DialogCode.Accepted:
+            self.settings.setValue("general/close-to-tray", dialog.close_to_tray.isChecked())
             self.settings.setValue("appearance/theme", dialog.theme.currentText())
             self.settings.setValue("installation/folder", dialog.folder.text())
             self.library.apps_dir = Path(dialog.folder.text())
             self.apply_theme()
             self.scan_installed()
 
-    def open_repositories(self) -> None:
+    def open_repositories(self, adding: bool = False, app_id: str | None = None) -> None:
         if self.task is not None:
             return
         try:
@@ -620,7 +854,14 @@ class LauncherWindow(QMainWindow):
         except (OSError, ValueError) as error:
             QMessageBox.warning(self, "Cannot open repositories", str(error))
             return
-        dialog.catalog_changed.connect(self.scan_installed)
+        dialog.catalog_changed.connect(self.catalog_changed)
+        if adding:
+            dialog.start_add_repository()
+        elif app_id:
+            for row in range(dialog.repo_list.count()):
+                if dialog.repo_list.item(row).data(Qt.ItemDataRole.UserRole) == app_id:
+                    dialog.repo_list.setCurrentRow(row)
+                    break
         dialog.exec()
 
     def has_update(self, app_id: str) -> bool:
@@ -639,13 +880,30 @@ class LauncherWindow(QMainWindow):
                     self.cards.pop(app_id).deleteLater()
                     self.releases.pop(app_id, None)
                     self.check_errors.pop(app_id, None)
+                    self.release_infos.pop(app_id, None)
+                    self.release_errors.pop(app_id, None)
                 for app in apps:
                     if app.id not in self.cards or self.cards[app.id].app != app:
                         old = self.cards.pop(app.id, None)
                         if old is not None:
                             old.deleteLater()
+                        self.releases.pop(app.id, None)
+                        self.check_errors.pop(app.id, None)
                         self.cards[app.id] = self.create_card(app)
                 self.apps = apps
+            for app in apps:
+                info = cached_info(app, self.library.data_dir / "release-cache")
+                if info is not None and (
+                    app.id not in self.release_infos
+                    or info.checked_at > self.release_infos[app.id].checked_at
+                ):
+                    self.release_infos[app.id] = info
+                if app.id in self.release_infos:
+                    self.apply_release_info(app)
+                else:
+                    release = cached_release(app, self.library.data_dir / "release-cache")
+                    if release is not None:
+                        self.releases[app.id] = release
             self.installed = installed
             if self.task is None:
                 self.footer.setText(f"{len(self.installed)} apps installed with AppHarbour.")
@@ -716,6 +974,12 @@ class LauncherWindow(QMainWindow):
 
     def task_finished(self, result: TaskResult) -> None:
         self.releases.update(result.releases)
+        for app in self.apps:
+            release = result.releases.get(app.id)
+            if release is not None:
+                info = remember_release(app, release, self.library.data_dir / "release-cache")
+                if info is not None:
+                    self.release_infos[app.id] = info
         self.check_errors.update(result.errors)
         for app_id in result.releases:
             self.check_errors.pop(app_id, None)
@@ -741,32 +1005,95 @@ class LauncherWindow(QMainWindow):
             self.cancel_button.setText("Cancelling…")
             self.cancel_button.setEnabled(False)
 
-    def check_updates(self) -> None:
+    def apply_release_info(self, app: App) -> None:
+        info = self.release_infos[app.id]
+        choice = info.choice(app.include_prereleases)
+        if choice and choice.release:
+            self.releases[app.id] = choice.release
+        else:
+            self.releases.pop(app.id, None)
+        error = info.error(app.include_prereleases)
+        if error:
+            self.check_errors[app.id] = error
+        else:
+            self.check_errors.pop(app.id, None)
+
+    def catalog_changed(self) -> None:
         self.scan_installed()
-        apps = [app for app in self.apps if app.id in self.installed]
-        if not apps:
-            self.footer.setText("Install an app from All apps before checking for updates.")
+        if self.background_enabled:
+            self.queue_release_checks(
+                [app.id for app in self.apps if app.id not in self.release_infos]
+            )
+
+    def refresh_releases(self, *, force: bool = False) -> None:
+        if self.release_task is not None or self.close_after_release:
             return
+        self.background_enabled = True
+        self.scan_installed()
+        self.release_force = force
+        self.queue_release_checks([app.id for app in self.apps])
+
+    def queue_release_checks(self, app_ids: list[str]) -> None:
+        for app_id in app_ids:
+            if app_id not in self.release_queue and app_id != self.release_checking:
+                self.release_queue.append(app_id)
+        if self.release_task is None:
+            self.next_release_check()
+
+    def next_release_check(self) -> None:
+        if self.close_after_release:
+            self.close()
+            return
+        apps = {app.id: app for app in self.apps}
+        while self.release_queue:
+            app_id = self.release_queue.pop(0)
+            if app_id in apps:
+                break
+        else:
+            self.release_checking = None
+            self.refresh()
+            if self.task is None:
+                self.footer.setText(
+                    "Release refresh finished."
+                    + (
+                        " Some checks failed; cards retain previously known information."
+                        if self.release_errors
+                        else ""
+                    )
+                )
+            return
+        app = apps[app_id]
+        force = self.release_force
 
         def operation(cancel: Event, progress: Progress) -> TaskResult:
-            result = TaskResult("Release checks finished.")
-            for index, app in enumerate(apps):
-                check_cancel(cancel)
-                progress(f"Checking {app.name}…", index, len(apps))
-                try:
-                    result.releases[app.id] = latest_release(
-                        app, cancel, self.library.data_dir / "release-cache"
-                    )
-                except (OSError, ValueError) as error:
-                    result.errors[app.id] = str(error)
-            result.message = f"Installed apps checked: {len(result.releases)}. " + (
-                f"{len(result.errors)} checks could not finish."
-                if result.errors
-                else "Recent results may be reused for up to 5 minutes."
+            info = discover_releases(
+                app, cancel, self.library.data_dir / "release-cache", force=force
             )
-            return result
+            return TaskResult("Release checked.", release_infos={app.id: info})
 
-        self.start_task("Checking releases…", operation)
+        self.release_checking = app.id
+        self.release_task = Task(operation)
+        self.release_task.signals.finished.connect(self.release_check_finished)
+        self.release_task.signals.failed.connect(self.release_check_failed)
+        if self.task is None:
+            self.footer.setText(f"Checking releases for {app.name}…")
+        self.refresh()
+        QThreadPool.globalInstance().start(self.release_task)
+
+    def release_check_finished(self, result: TaskResult) -> None:
+        self.release_task = None
+        for app in self.apps:
+            info = result.release_infos.get(app.id)
+            if info is not None:
+                self.release_infos[app.id] = info
+                self.release_errors.pop(app.id, None)
+                self.apply_release_info(app)
+        self.next_release_check()
+
+    def release_check_failed(self, error: str) -> None:
+        if self.release_checking is not None:
+            self.release_errors[self.release_checking] = error
+        self.release_check_finished(TaskResult(error))
 
     def install_app(self, app_id: str) -> None:
         app = next(app for app in self.apps if app.id == app_id)
@@ -847,7 +1174,12 @@ class LauncherWindow(QMainWindow):
         self.start_task(f"Removing {app.name}…", operation)
 
     def closeEvent(self, event: QCloseEvent) -> None:
-        if not self.quitting and self.tray.isVisible() and QSystemTrayIcon.isSystemTrayAvailable():
+        if (
+            not self.quitting
+            and self.settings.value("general/close-to-tray", True, type=bool)
+            and self.tray.isVisible()
+            and QSystemTrayIcon.isSystemTrayAvailable()
+        ):
             self.hide()
             event.ignore()
             return
@@ -861,6 +1193,15 @@ class LauncherWindow(QMainWindow):
                 self.quitting = True
                 self.close_after_task = True
                 self.cancel_task()
+            event.ignore()
+            return
+        if self.release_task is not None:
+            self.quitting = True
+            self.close_after_release = True
+            self.release_queue.clear()
+            self.release_task.cancel.set()
+            self.tray.hide()
+            self.hide()
             event.ignore()
             return
         self.tray.hide()
@@ -920,6 +1261,10 @@ class LauncherWindow(QMainWindow):
             QFrame#appCard {{ background: {surface}; border: 1px solid {border};
                 border-radius: 12px; }}
             QFrame#appCard:hover {{ border-color: {accent}; }}
+            QFrame#cardDivider {{ border: none; background: {border}; }}
+            QLabel#cardDescription, QLabel#versionCaption {{ color: {muted}; font-size: 12px; }}
+            QLabel#cardChecked {{ color: {muted}; font-size: 11px; }}
+            QPushButton#cardAction {{ padding: 7px 12px; font-size: 13px; }}
             QPushButton, QToolButton {{ background: {surface}; color: {foreground};
                 border: 1px solid {border}; border-radius: 7px; padding: 9px 14px; }}
             QPushButton:hover, QToolButton:hover {{ border-color: {accent}; color: {accent}; }}
@@ -933,14 +1278,31 @@ class LauncherWindow(QMainWindow):
                 border-color: {border}; }}
             QPushButton#danger {{ color: {"#ff9d9d" if dark else "#a52626"}; }}
             QPushButton#appName {{ border: none; padding: 0; text-align: left;
-                font-size: 19px; font-weight: 650; background: transparent; }}
+                font-size: 17px; font-weight: 650; background: transparent; }}
             QPushButton#appName:focus {{ outline: 2px solid {accent}; }}
             QToolButton#cardMenu {{ border: none; background: transparent;
                 font-size: 24px; padding: 0px 6px; }}
             QToolButton::menu-indicator {{ image: none; }}
             QLabel#status {{ color: {muted}; font-size: 12px; }}
+            QLabel#releaseBadge {{ border: 1px solid; border-radius: 9px;
+                padding: 2px 7px; font-size: 11px; font-weight: 600; }}
+            QLabel#releaseBadge[release="latest"] {{ color: {"#7ee2a8" if dark else "#18783c"};
+                border-color: {"#3c8159" if dark else "#89bd9b"}; }}
+            QLabel#releaseBadge[release="prerelease"] {{ color: {"#f0c46e" if dark else "#895b00"};
+                border-color: {"#96753b" if dark else "#c7a660"}; }}
+            QPushButton#versionButton {{ background: transparent; border: none; color: {muted}; }}
+            QListWidget#settingsSections {{ border: none; background: transparent; outline: 0; }}
+            QListWidget#settingsSections::item {{ padding: 12px; border-radius: 7px; }}
+            QListWidget#settingsSections::item:selected {{
+                background: {surface}; color: {accent}; }}
             QLineEdit, QComboBox {{ background: {surface}; color: {foreground};
                 border: 1px solid {border}; border-radius: 7px; padding: 9px; }}
+            QComboBox QAbstractItemView {{ background: {surface}; color: {foreground};
+                border: 1px solid {border}; padding: 4px; outline: 0;
+                selection-background-color: {accent}; selection-color: {background}; }}
+            QComboBox QAbstractItemView::item {{ min-height: 32px; padding: 4px 10px; }}
+            QComboBox QAbstractItemView::item:selected {{ background: {accent};
+                color: {background}; }}
             QAbstractItemView QLineEdit, QAbstractItemView QLineEdit:focus {{
                 padding: 0; border: 1px solid {accent}; border-radius: 2px; }}
             QScrollArea, QScrollArea > QWidget > QWidget {{ background: {background}; }}

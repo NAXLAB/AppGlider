@@ -1,0 +1,195 @@
+"""Discover both release channels and retain verified information for offline cards."""
+
+import contextlib
+import json
+import re
+import time
+from dataclasses import asdict, dataclass, replace
+from pathlib import Path
+from threading import Event
+from typing import Any
+
+from appharbour import releases
+from appharbour.catalog import App
+from appharbour.releases import Release
+from appharbour.storage import atomic_json
+
+
+@dataclass(frozen=True)
+class ReleaseOption:
+    version: str
+    release: Release | None
+    error: str = ""
+
+
+@dataclass(frozen=True)
+class ReleaseInfo:
+    stable: ReleaseOption | None
+    preview: ReleaseOption | None
+    checked_at: float
+    newer_stable: ReleaseOption | None = None
+
+    def choice(self, include_previews: bool) -> ReleaseOption | None:
+        choices = (
+            [self.stable, self.preview, self.newer_stable] if include_previews else [self.stable]
+        )
+        return max(
+            (choice for choice in choices if choice is not None),
+            key=lambda choice: releases.version_key(choice.version),
+            default=None,
+        )
+
+    def error(self, include_previews: bool) -> str:
+        choice = self.choice(include_previews)
+        if choice is not None:
+            return choice.error
+        return "Only prereleases are available. Choose Stable + previews to use them."
+
+    def fresh(self) -> bool:
+        return 0 <= time.time() - self.checked_at < releases.CACHE_SECONDS
+
+
+def info_path(app: App, cache_dir: Path) -> Path:
+    return cache_dir / f"{app.id}-{releases.architecture()}-catalog.json"
+
+
+def cached_info(app: App, cache_dir: Path) -> ReleaseInfo | None:
+    try:
+        path = info_path(app, cache_dir)
+        if path.stat().st_size > releases.MAX_METADATA:
+            return None
+        data = json.loads(path.read_text())
+        checked_at = data["checked_at"]
+        if type(checked_at) not in (int, float) or not 0 < checked_at <= time.time() + 300:
+            return None
+        options: list[ReleaseOption | None] = []
+        for channel, prerelease in (("stable", False), ("preview", True), ("newer_stable", False)):
+            item = data.get(channel)
+            if item is None:
+                options.append(None)
+                continue
+            version, error = item["version"], item["error"]
+            if (
+                not isinstance(version, str)
+                or len(version) > 128
+                or not re.fullmatch(releases.VERSION, version)
+                or not isinstance(error, str)
+                or len(error) > 4096
+            ):
+                return None
+            release = (
+                releases.release_from_cache(replace(app, include_prereleases=True), item["release"])
+                if item["release"] is not None
+                else None
+            )
+            if release is None and not error:
+                return None
+            if release and (release.version != version or release.prerelease != prerelease):
+                return None
+            options.append(ReleaseOption(version, release, error))
+        if not any(options):
+            return None
+        return ReleaseInfo(options[0], options[1], checked_at, options[2])
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
+def remember_release(app: App, release: Release, cache_dir: Path) -> ReleaseInfo | None:
+    info = cached_info(app, cache_dir)
+    if info is None:
+        return None
+    option = ReleaseOption(release.version, release)
+    if release.prerelease:
+        info = replace(info, preview=option)
+    elif release.is_latest:
+        info = replace(info, stable=option)
+    else:
+        info = replace(info, newer_stable=option)
+    # Only this channel was rechecked; keep the catalog timestamp conservative.
+    with contextlib.suppress(OSError):
+        atomic_json(info_path(app, cache_dir), asdict(info))
+    return info
+
+
+def inspect_entries(
+    app: App, entries: list[Any], cancel: Event, *, public: bool = False
+) -> ReleaseInfo:
+    options: list[ReleaseOption | None] = []
+    for channel in ("stable", "preview", "newer_stable"):
+        prerelease = channel == "preview"
+        candidates = [
+            entry
+            for entry in entries
+            if isinstance(entry, dict)
+            and not entry.get("draft")
+            and entry.get("prerelease", False) is prerelease
+        ]
+        if channel == "stable":
+            designated = [entry for entry in candidates if entry.get("is_latest")]
+            candidates = designated or candidates
+        if not candidates:
+            options.append(None)
+            continue
+        try:
+            data = releases.newest_release(candidates, True)
+        except ValueError:
+            options.append(None)
+            continue
+        version = str(data["tag_name"]).removeprefix("v")
+        if channel == "newer_stable" and (
+            options[0] is None
+            or releases.version_key(version) <= releases.version_key(options[0].version)
+        ):
+            options.append(None)
+            continue
+        try:
+            releases.check_cancel(cancel)
+            if public:
+                release = releases.page_release_asset(app, data, cancel)
+            else:
+                release = releases.select_release(app, data, releases.architecture())
+                release = releases.with_checksum(app, data["tag_name"], release, cancel)
+        except releases.RateLimited:
+            raise
+        except ValueError as error:
+            options.append(ReleaseOption(version, None, str(error)[:4096]))
+        else:
+            options.append(ReleaseOption(version, release))
+    if not any(options):
+        raise ValueError("No published release with a supported version was found.")
+    return ReleaseInfo(options[0], options[1], time.time(), options[2])
+
+
+def discover_releases(
+    app: App, cancel: Event, cache_dir: Path, *, force: bool = False
+) -> ReleaseInfo:
+    releases.check_cancel(cancel)
+    cached = cached_info(app, cache_dir)
+    if not force and cached and cached.fresh():
+        return cached
+    releases.restore_rate_limits(cache_dir)
+    app = replace(app, include_prereleases=True)
+    try:
+        info = inspect_entries(app, releases.api_entries(app, cancel), cancel)
+    except releases.RateLimited:
+        with contextlib.suppress(OSError):
+            atomic_json(cache_dir / "limits.json", releases._RETRY_AFTER)
+        info = inspect_entries(app, releases.page_entries(app, cancel), cancel, public=True)
+    releases.check_cancel(cancel)
+    with contextlib.suppress(OSError):
+        atomic_json(info_path(app, cache_dir), asdict(info))
+        # Keep the existing download cache format and its five-minute safety window.
+        for include in (False, True):
+            choice = info.choice(include)
+            if choice and choice.release:
+                atomic_json(
+                    releases.release_cache_path(
+                        replace(app, include_prereleases=include), cache_dir
+                    ),
+                    {"checked_at": info.checked_at, "release": asdict(choice.release)},
+                )
+            else:
+                releases.release_cache_path(
+                    replace(app, include_prereleases=include), cache_dir
+                ).unlink(missing_ok=True)
+    return info

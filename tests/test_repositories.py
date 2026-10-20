@@ -15,6 +15,7 @@ from unittest.mock import patch
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QSettings, Qt, QTimer
+from PySide6.QtGui import QPalette
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QMessageBox
 from test_library import appimage_bytes
@@ -23,6 +24,7 @@ from appharbour import APP_ICON
 from appharbour.catalog import APPS, custom_app, load_apps
 from appharbour.icons import IconCandidate, normalise_icon
 from appharbour.library import Library
+from appharbour.release_info import ReleaseInfo, ReleaseOption
 from appharbour.releases import Release, architecture, check_cancel, select_release
 from appharbour.repositories_dialog import RepositoriesDialog
 from appharbour.window import LauncherWindow, SettingsDialog
@@ -273,11 +275,49 @@ class RepositoryGuiTests(unittest.TestCase):
                 return
         self.fail("Custom repository missing from list")
 
+    def test_combobox_popups_have_readable_rows_and_contrast_in_both_themes(self):
+        self.library.add_repository(CUSTOM)
+        self.dialog.refresh_list()
+        self.select_custom()
+        settings = SettingsDialog(self.settings, self.window)
+        self.addCleanup(settings.close)
+        for theme in ("Light", "Dark"):
+            self.settings.setValue("appearance/theme", theme)
+            self.window.apply_theme()
+            for owner, combo in (
+                (self.dialog, self.dialog.release_channel),
+                (self.dialog, self.dialog.icon_choices),
+                (settings, settings.theme),
+            ):
+                with self.subTest(theme=theme, control=combo.accessibleName()):
+                    owner.show()
+                    combo.showPopup()
+                    QTest.qWait(10)
+                    try:
+                        view = combo.view()
+                        for row in range(combo.count()):
+                            rect = view.visualRect(combo.model().index(row, 0))
+                            self.assertGreaterEqual(rect.height(), view.fontMetrics().height() + 12)
+                            text_width = view.fontMetrics().horizontalAdvance(combo.itemText(row))
+                            self.assertGreaterEqual(rect.width(), text_width + 20)
+                        palette = view.palette()
+                        self.assertNotEqual(
+                            palette.color(QPalette.ColorRole.Text),
+                            palette.color(QPalette.ColorRole.Base),
+                        )
+                        self.assertNotEqual(
+                            palette.color(QPalette.ColorRole.HighlightedText),
+                            palette.color(QPalette.ColorRole.Highlight),
+                        )
+                    finally:
+                        combo.hidePopup()
+
     def test_settings_button_opens_repository_management(self):
         settings = SettingsDialog(self.settings, self.window)
         self.addCleanup(settings.close)
         with patch.object(self.window, "open_repositories") as open_repositories:
             settings.repositories_requested.connect(self.window.open_repositories)
+            settings.sections.setCurrentRow(1)
             QTest.mouseClick(settings.repositories_button, Qt.MouseButton.LeftButton)
             open_repositories.assert_called_once()
 
@@ -296,6 +336,7 @@ class RepositoryGuiTests(unittest.TestCase):
             active = self.qt.activeModalWidget()
             if isinstance(active, SettingsDialog):
                 QTimer.singleShot(0, close_repositories)
+                active.sections.setCurrentRow(1)
                 QTest.mouseClick(active.repositories_button, Qt.MouseButton.LeftButton)
                 active.reject()
 
@@ -491,12 +532,16 @@ class RepositoryGuiTests(unittest.TestCase):
         self.dialog.remove_repository()
         self.assertIn("Uninstall", self.dialog.status.text())
         self.assertIn(CUSTOM, self.library.apps)
-        with patch(
-            "appharbour.window.latest_release", return_value=custom_release("0.9.5")
-        ) as latest:
-            self.window.check_updates()
-            self.wait_for_task(self.window)
-            latest.assert_called_once()
+        release = custom_release("0.9.5")
+        info = ReleaseInfo(ReleaseOption(release.version, release), None, time.time())
+        with patch("appharbour.window.discover_releases", return_value=info) as discover:
+            self.window.refresh_releases()
+            deadline = time.monotonic() + 10
+            while self.window.release_task is not None and time.monotonic() < deadline:
+                QTest.qWait(10)
+                time.sleep(0.001)
+            self.assertIsNone(self.window.release_task)
+            self.assertEqual(discover.call_count, len(self.window.apps))
         self.assertEqual(self.window.tabs.tabText(2), "Updates (1)")
         with (
             patch("appharbour.window.latest_release", return_value=custom_release("0.9.5")),
@@ -515,6 +560,85 @@ class RepositoryGuiTests(unittest.TestCase):
         self.dialog.remove_repository()
         self.assertNotIn(CUSTOM.id, self.window.cards)
         self.assertEqual(self.library.scan(), {})
+
+    def test_prerelease_only_repository_can_be_added_after_explicit_opt_in(self):
+        self.dialog.start_add_repository()
+        self.dialog.url.setText(CUSTOM.source_url)
+        self.dialog.name.setText(CUSTOM.name)
+        beta = replace(custom_release("0.10.0-beta.1"), prerelease=True, is_latest=False)
+
+        def inspect(app, cancel, cache):
+            if not app.include_prereleases:
+                raise ValueError(
+                    "Only prereleases are available. Choose 'Stable and prerelease versions'."
+                )
+            return beta
+
+        with patch("appharbour.repositories_dialog.latest_release", side_effect=inspect):
+            self.dialog.inspect_repository()
+            self.wait_for_task(self.dialog)
+            self.assertIn("Only prereleases", self.dialog.status.text())
+            self.assertFalse(self.dialog.add_button.isEnabled())
+            self.dialog.release_channel.setCurrentIndex(1)
+            self.dialog.inspect_repository()
+            self.wait_for_task(self.dialog)
+        self.assertEqual(self.dialog.version_label.badge.text(), "Pre-release")
+        self.assertTrue(self.dialog.add_button.isEnabled())
+        self.dialog.add_repository()
+        self.assertTrue(self.window.cards[CUSTOM.id].app.include_prereleases)
+        reopened = Library(self.library.data_dir, self.library.apps_dir)
+        self.assertTrue(reopened.apps[-1].include_prereleases)
+        self.assertEqual(self.dialog.release_channel.currentIndex(), 1)
+
+    def test_existing_preferences_clear_old_results_and_update_icons_and_release(self):
+        self.library.add_repository(CUSTOM)
+        self.dialog.refresh_list()
+        self.select_custom()
+        stable = custom_release()
+        self.window.releases[CUSTOM.id] = stable
+        self.window.check_errors[CUSTOM.id] = "Old failure"
+        self.dialog.release_channel.setCurrentIndex(1)
+        self.assertNotIn(CUSTOM.id, self.window.releases)
+        self.assertNotIn(CUSTOM.id, self.window.check_errors)
+        self.assertTrue(self.window.cards[CUSTOM.id].app.include_prereleases)
+        self.assertEqual(self.dialog.icon_target, self.dialog.selected_app)
+        self.dialog.select_icon(self.dialog.icon_choices.count() - 1)
+        self.assertIn("Saved icon", self.dialog.status.text())
+        beta = replace(custom_release("0.10.0-beta.1"), prerelease=True, is_latest=False)
+        with patch("appharbour.releases.api_release", return_value=beta):
+            self.dialog.inspect_repository()
+            self.wait_for_task(self.dialog)
+        self.assertEqual(self.window.releases[CUSTOM.id], beta)
+        self.assertEqual(self.window.cards[CUSTOM.id].available_version.badge.text(), "Pre-release")
+        self.dialog.release_channel.setCurrentIndex(0)
+        self.assertNotIn(CUSTOM.id, self.window.releases)
+        self.assertFalse(self.window.cards[CUSTOM.id].app.include_prereleases)
+
+    def test_builtin_preferences_save_without_enabling_custom_icon_actions(self):
+        selected = self.dialog.selected_app
+        self.assertIn(selected.id, {app.id for app in APPS})
+        self.dialog.release_channel.setCurrentIndex(1)
+        self.assertTrue(self.window.cards[selected.id].app.include_prereleases)
+        self.assertIsNone(self.dialog.icon_target)
+        self.assertTrue(self.dialog.remove_button.isHidden())
+        self.assertTrue(self.dialog.icon_group.isHidden())
+        with patch("appharbour.repositories_dialog.latest_release", return_value=custom_release()):
+            self.dialog.inspect_repository()
+            self.wait_for_task(self.dialog)
+        self.assertIsNone(self.dialog.task)
+
+    def test_direct_add_app_opens_the_add_form(self):
+        observed = []
+
+        def inspect_dialog():
+            active = self.qt.activeModalWidget()
+            if isinstance(active, RepositoriesDialog):
+                observed.append(active.adding and active.add_page.isVisible())
+                active.reject()
+
+        QTimer.singleShot(0, inspect_dialog)
+        self.window.add_app_button.click()
+        self.assertEqual(observed, [True])
 
 
 if __name__ == "__main__":

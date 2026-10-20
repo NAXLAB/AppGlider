@@ -8,9 +8,9 @@ from pathlib import Path
 
 from PySide6.QtCore import QTimer
 from PySide6.QtGui import QIcon
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QComboBox
 
-from appharbour import APP_ICON, APP_NAME
+from appharbour import APP_ICON, APP_NAME, APP_VERSION
 from appharbour.window import LauncherWindow
 
 
@@ -25,6 +25,7 @@ def main() -> int:
     app = QApplication(sys.argv)
     app.setOrganizationName(APP_NAME)
     app.setApplicationName(APP_NAME)
+    app.setApplicationVersion(APP_VERSION)
     app.setApplicationDisplayName(APP_NAME)
     app.setDesktopFileName("appharbour")
     app.setWindowIcon(QIcon(str(APP_ICON)))
@@ -42,6 +43,15 @@ def main() -> int:
                 json.dumps(
                     {
                         "app": APP_NAME,
+                        "version": app.applicationVersion(),
+                        "header_version": window.version_button.text(),
+                        "refresh_action": window.check_button.text(),
+                        "release_preferences": sum(
+                            card.preferences_action.isEnabled() for card in window.cards.values()
+                        ),
+                        "card_dropdowns": sum(
+                            len(card.findChildren(QComboBox)) for card in window.cards.values()
+                        ),
                         "python": sys.version.split()[0],
                         "prefix": sys.prefix,
                         "appdir": os.environ.get("APPDIR"),
@@ -60,4 +70,6 @@ def main() -> int:
             app.quit()
 
         QTimer.singleShot(200, report)
+    else:
+        QTimer.singleShot(0, window.refresh_releases)
     return app.exec()

@@ -18,15 +18,17 @@ from urllib.error import HTTPError
 from urllib.parse import quote, unquote, urljoin, urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
+from appharbour import APP_VERSION
 from appharbour.catalog import App
 from appharbour.storage import atomic_json
 
 CACHE_SECONDS = 5 * 60
+RELEASE_PAGES = 3
 _RETRY_AFTER: dict[str, float] = {}
 
 MAX_METADATA = 4 * 1024 * 1024
 MAX_DOWNLOAD = 4 * 1024 * 1024 * 1024
-VERSION = r"\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)?"
+VERSION = r"\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?(?:\+[A-Za-z0-9.-]+)?"
 Progress = Callable[[str, int, int], None]
 ASSET_ARCHITECTURES = {
     "x86_64": ("x86_64", "x86-64", "x64", "amd64"),
@@ -74,12 +76,15 @@ def stems(app: App) -> tuple[str, ...]:
     return (app.id, former[app.id]) if app.id in former else (app.id,)
 
 
-def version_key(version: str | None) -> tuple[int, int, int, int, str]:
-    match = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)(.*)", version or "")
+def version_key(version: str | None) -> tuple[int, int, int, int, tuple[tuple[int, int, str], ...]]:
+    match = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)(?:-([^+]+))?(?:\+.*)?", version or "")
     if not match:
-        return (0, 0, 0, 0, "")
-    suffix = match[4].split("+", 1)[0]
-    return (int(match[1]), int(match[2]), int(match[3]), int(not suffix), suffix)
+        return (0, 0, 0, 0, ())
+    suffix = match[4] or ""
+    identifiers = tuple(
+        (0, int(part), "") if part.isdigit() else (1, 0, part) for part in suffix.split(".") if part
+    )
+    return (int(match[1]), int(match[2]), int(match[3]), int(not suffix), identifiers)
 
 
 def valid_url(url: str) -> bool:
@@ -124,7 +129,7 @@ def request(url: str, *, method: str = "GET") -> Any:
     host = urlsplit(url).netloc
     if _RETRY_AFTER.get(host, 0) > time.time():
         raise RateLimited(host, _RETRY_AFTER[host])
-    req = Request(url, headers={"User-Agent": "AppHarbour/0.1.3"}, method=method)
+    req = Request(url, headers={"User-Agent": f"AppHarbour/{APP_VERSION}"}, method=method)
     try:
         return build_opener(GitHubRedirect()).open(req, timeout=20)
     except HTTPError as error:
@@ -170,6 +175,8 @@ class Release:
     url: str
     size: int
     sha256: str
+    prerelease: bool = False
+    is_latest: bool = True
 
     def newer_than(self, installed_version: str | None) -> bool:
         return installed_version is not None and version_key(self.version) > version_key(
@@ -217,8 +224,16 @@ def select_asset(app: App, assets: list[Any], version: str, arch: str) -> dict[s
 
 
 def select_release(app: App, data: object, arch: str) -> Release:
-    if not isinstance(data, dict) or data.get("draft") or data.get("prerelease"):
-        raise ValueError("No stable release is available.")
+    if not isinstance(data, dict) or data.get("draft"):
+        raise ValueError("No published release is available.")
+    prerelease = data.get("prerelease", False)
+    is_latest = data.get("is_latest", not prerelease)
+    if type(prerelease) is not bool or type(is_latest) is not bool:
+        raise ValueError("GitHub returned invalid release flags.")
+    if prerelease and not app.include_prereleases:
+        raise ValueError(
+            "Only prereleases are available. Choose 'Stable and prerelease versions' to use them."
+        )
     tag = data.get("tag_name")
     if not isinstance(tag, str) or len(tag) > 128 or not re.fullmatch(rf"v?{VERSION}", tag):
         raise ValueError("The release version is not recognised; expected a tag like v1.2.3.")
@@ -246,7 +261,9 @@ def select_release(app: App, data: object, arch: str) -> Release:
     sha256 = digest[7:] if isinstance(digest, str) and digest.startswith("sha256:") else ""
     if not re.fullmatch(r"[a-fA-F0-9]{64}", sha256):
         sha256 = ""
-    return Release(version, name, url, size, sha256.lower())
+    return Release(
+        version, name, url, size, sha256.lower(), prerelease, is_latest and not prerelease
+    )
 
 
 def checksums(text: str) -> dict[str, str]:
@@ -279,11 +296,122 @@ def with_checksum(app: App, tag: str, release: Release, cancel: Event) -> Releas
     return replace(release, sha256=digest)
 
 
-def api_release(app: App, cancel: Event) -> Release:
+def newest_release(entries: list[Any], include_prereleases: bool) -> dict[str, Any]:
+    published = [entry for entry in entries if isinstance(entry, dict) and not entry.get("draft")]
+    eligible = [entry for entry in published if include_prereleases or not entry.get("prerelease")]
+    if not eligible and any(entry.get("prerelease") for entry in published):
+        raise ValueError(
+            "Only prereleases are available. Choose 'Stable and prerelease versions' to use them."
+        )
+    recognised = [
+        entry
+        for entry in eligible
+        if isinstance(entry.get("tag_name"), str)
+        and len(entry["tag_name"]) <= 128
+        and re.fullmatch(rf"v?{VERSION}", entry["tag_name"])
+    ]
+    if not recognised:
+        raise ValueError("No published release with a supported version was found.")
+    return max(recognised, key=lambda entry: version_key(entry["tag_name"].removeprefix("v")))
+
+
+def api_entries(app: App, cancel: Event) -> list[Any]:
     check_cancel(cancel)
-    data = json.loads(read_metadata(f"https://api.github.com/repos/{app.repo}/releases/latest"))
+    prefix = f"https://api.github.com/repos/{app.repo}/releases"
+    try:
+        stable = json.loads(read_metadata(prefix + "/latest"))
+    except MissingResource:
+        stable = None
+    if stable is not None and not isinstance(stable, dict):
+        raise ValueError("GitHub returned invalid release metadata.")
+    if not app.include_prereleases and stable is not None:
+        return [{**stable, "is_latest": True}]
+    check_cancel(cancel)
+    items = json.loads(read_metadata(f"{prefix}?per_page={RELEASE_PAGES * 10}&page=1"))
+    if not isinstance(items, list):
+        raise ValueError("GitHub returned an invalid release listing.")
+    entries: list[Any] = []
+    for item in items:
+        if isinstance(item, dict):
+            entries.append(
+                {
+                    **item,
+                    "is_latest": bool(stable and item.get("tag_name") == stable.get("tag_name")),
+                }
+            )
+    if stable is not None:
+        entries.append({**stable, "is_latest": True})
+    return entries
+
+
+def api_release(app: App, cancel: Event) -> Release:
+    data = newest_release(api_entries(app, cancel), app.include_prereleases)
     release = select_release(app, data, architecture())
     return with_checksum(app, str(data["tag_name"]), release, cancel)
+
+
+class ReleaseListParser(HTMLParser):
+    """Read release headers, excluding labels and links in release notes."""
+
+    def __init__(self, app: App) -> None:
+        super().__init__()
+        self.tag_prefix = f"{app.source_url}/releases/tag/"
+        self.entries: list[dict[str, Any]] = []
+        self.current: dict[str, Any] | None = None
+        self.section_depth = 0
+        self.header = False
+        self.label = False
+        self.owned_tag = False
+        self.next_page = False
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        attributes = dict(attrs)
+        if tag == "a" and attributes.get("rel") == "next":
+            self.next_page = True
+        if tag == "section":
+            anchor = attributes.get("data-release-anchor") or ""
+            if self.current is not None:
+                self.section_depth += 1
+            elif anchor.startswith("release-"):
+                self.current = {
+                    "tag_name": anchor[8:],
+                    "prerelease": False,
+                    "is_latest": False,
+                    "draft": False,
+                }
+                self.section_depth = 1
+                self.header = True
+                self.owned_tag = False
+        if self.current is None or not self.header:
+            return
+        classes = (attributes.get("class") or "").split()
+        if "markdown-body" in classes:
+            self.header = False
+        if tag == "a":
+            url = urljoin("https://github.com", attributes.get("href") or "")
+            if url.lower().startswith(self.tag_prefix.lower()):
+                self.owned_tag |= unquote(url[len(self.tag_prefix) :]) == self.current["tag_name"]
+        if tag == "span" and "Label" in classes:
+            self.label = True
+
+    def handle_data(self, data: str) -> None:
+        if self.current is not None and self.header and self.label:
+            key = {"Pre-release": "prerelease", "Latest": "is_latest", "Draft": "draft"}.get(
+                data.strip()
+            )
+            if key:
+                self.current[key] = True
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == "span":
+            self.label = False
+        if tag == "section" and self.current is not None:
+            self.section_depth -= 1
+            if not self.section_depth:
+                if self.owned_tag:
+                    self.entries.append(self.current)
+                self.current = None
+                self.label = False
 
 
 class ReleaseAssetsParser(HTMLParser):
@@ -316,17 +444,49 @@ class ReleaseAssetsParser(HTMLParser):
                 self.digests[name] = digest.lower()
 
 
-def page_release(app: App, cancel: Event) -> Release:
+def page_entries(app: App, cancel: Event) -> list[Any]:
     """Public release URLs remain usable when the REST API quota is exhausted."""
     check_cancel(cancel)
-    with request(f"https://github.com/{app.repo}/releases/latest") as response:
-        location = str(response.geturl())
+    try:
+        with request(f"https://github.com/{app.repo}/releases/latest") as response:
+            location = str(response.geturl())
+    except MissingResource:
+        location = ""
+    if location.rstrip("/").casefold() == f"{app.source_url}/releases".casefold():
+        location = ""
     prefix = f"https://github.com/{app.repo}/releases/tag/"
-    if not location.lower().startswith(prefix.lower()):
+    if location and not location.lower().startswith(prefix.lower()):
         raise ValueError("GitHub did not identify a stable release for this repository.")
     tag = unquote(location[len(prefix) :])
-    if len(tag) > 128 or not re.fullmatch(rf"v?{VERSION}", tag):
+    if tag and (len(tag) > 128 or not re.fullmatch(rf"v?{VERSION}", tag)):
         raise ValueError("GitHub returned an invalid release tag.")
+    data: dict[str, Any] = {"tag_name": tag, "prerelease": False, "is_latest": True}
+    if app.include_prereleases or not tag:
+        entries: list[Any] = []
+        for page in range(1, RELEASE_PAGES + 1):
+            check_cancel(cancel)
+            parser_list = ReleaseListParser(app)
+            url = f"{app.source_url}/releases" + (f"?page={page}" if page > 1 else "")
+            parser_list.feed(read_metadata(url).decode("utf-8"))
+            parser_list.close()
+            if not parser_list.entries:
+                raise ValueError("Could not read GitHub's public release listing; retry later.")
+            entries.extend(parser_list.entries)
+            if not parser_list.next_page:
+                break
+        if tag:
+            entries.append(data)
+        return entries
+    return [data]
+
+
+def page_release(app: App, cancel: Event) -> Release:
+    data = newest_release(page_entries(app, cancel), app.include_prereleases)
+    return page_release_asset(app, data, cancel)
+
+
+def page_release_asset(app: App, data: dict[str, Any], cancel: Event) -> Release:
+    tag = data["tag_name"]
     download_prefix = f"https://github.com/{app.repo}/releases/download/{quote(tag, safe='')}/"
     check_cancel(cancel)
     parser = ReleaseAssetsParser(download_prefix)
@@ -341,7 +501,7 @@ def page_release(app: App, cancel: Event) -> Release:
     assets = [
         {**asset, "digest": parser.digests.get(name, "")} for name, asset in parser.assets.items()
     ]
-    release = select_release(app, {"tag_name": tag, "assets": assets}, architecture())
+    release = select_release(app, {**data, "assets": assets}, architecture())
     release = with_checksum(app, tag, release, cancel)
     check_cancel(cancel)
     with request(release.url, method="HEAD") as response:
@@ -355,8 +515,8 @@ def page_release(app: App, cancel: Event) -> Release:
 
 
 def cached_release(app: App, cache_dir: Path) -> Release | None:
-    path = cache_dir / f"{app.id}-{architecture()}.json"
     try:
+        path = release_cache_path(app, cache_dir)
         if path.stat().st_size > MAX_METADATA:
             return None
         data = json.loads(path.read_text())
@@ -369,30 +529,59 @@ def cached_release(app: App, cache_dir: Path) -> Release | None:
             or not 0 <= time.time() - checked_at < CACHE_SECONDS
         ):
             return None
-        item = data["release"]
-        prefix = f"https://github.com/{app.repo}/releases/download/"
-        url = item["url"]
-        if not isinstance(url, str) or not url.lower().startswith(prefix.lower()):
-            return None
-        tag = unquote(url[len(prefix) :].split("/", 1)[0])
-        release = select_release(
-            app,
-            {
-                "tag_name": tag,
-                "assets": [
-                    {
-                        "name": item["name"],
-                        "browser_download_url": url,
-                        "size": item["size"],
-                        "digest": "sha256:" + item["sha256"],
-                    }
-                ],
-            },
-            architecture(),
-        )
-        return release if release.sha256 and release.version == item["version"] else None
+        return release_from_cache(app, data["release"])
     except (OSError, ValueError, KeyError, TypeError):
         return None
+
+
+def release_from_cache(app: App, item: Any) -> Release:
+    prefix = f"https://github.com/{app.repo}/releases/download/"
+    url = item["url"]
+    if not isinstance(url, str) or not url.lower().startswith(prefix.lower()):
+        raise ValueError("Invalid cached download URL.")
+    tag = unquote(url[len(prefix) :].split("/", 1)[0])
+    release = select_release(
+        app,
+        {
+            "tag_name": tag,
+            "prerelease": item.get("prerelease", False),
+            "is_latest": item.get("is_latest", True),
+            "assets": [
+                {
+                    "name": item["name"],
+                    "browser_download_url": url,
+                    "size": item["size"],
+                    "digest": "sha256:" + item["sha256"],
+                }
+            ],
+        },
+        architecture(),
+    )
+    if not release.sha256 or release.version != item["version"]:
+        raise ValueError("Invalid cached release.")
+    return release
+
+
+def release_cache_path(app: App, cache_dir: Path) -> Path:
+    suffix = "-prereleases" if app.include_prereleases else ""
+    return cache_dir / f"{app.id}-{architecture()}{suffix}.json"
+
+
+def restore_rate_limits(cache_dir: Path) -> None:
+    try:
+        limits_path = cache_dir / "limits.json"
+        if limits_path.stat().st_size <= MAX_METADATA:
+            limits = json.loads(limits_path.read_text())
+            if isinstance(limits, dict):
+                for host, until in limits.items():
+                    if (
+                        valid_url(f"https://{host}/")
+                        and type(until) in (int, float)
+                        and 0 < until - time.time() <= 24 * 60 * 60
+                    ):
+                        _RETRY_AFTER[host] = max(_RETRY_AFTER.get(host, 0), until)
+    except (OSError, ValueError, TypeError):
+        pass
 
 
 def latest_release(app: App, cancel: Event, cache_dir: Path | None = None) -> Release:
@@ -401,20 +590,7 @@ def latest_release(app: App, cancel: Event, cache_dir: Path | None = None) -> Re
         cached = cached_release(app, cache_dir)
         if cached is not None:
             return cached
-        try:
-            limits_path = cache_dir / "limits.json"
-            if limits_path.stat().st_size <= MAX_METADATA:
-                limits = json.loads(limits_path.read_text())
-                if isinstance(limits, dict):
-                    for host, until in limits.items():
-                        if (
-                            valid_url(f"https://{host}/")
-                            and type(until) in (int, float)
-                            and 0 < until - time.time() <= 24 * 60 * 60
-                        ):
-                            _RETRY_AFTER[host] = max(_RETRY_AFTER.get(host, 0), until)
-        except (OSError, ValueError, TypeError):
-            pass
+        restore_rate_limits(cache_dir)
     try:
         release = api_release(app, cancel)
     except RateLimited:
@@ -426,7 +602,7 @@ def latest_release(app: App, cancel: Event, cache_dir: Path | None = None) -> Re
     if cache_dir is not None:
         with contextlib.suppress(OSError):
             atomic_json(
-                cache_dir / f"{app.id}-{architecture()}.json",
+                release_cache_path(app, cache_dir),
                 {"checked_at": time.time(), "release": asdict(release)},
             )
     return release

@@ -15,7 +15,7 @@ from pathlib import Path
 from threading import Event
 
 from appharbour import APP_ICON
-from appharbour.catalog import APPS, App, custom_app, load_apps
+from appharbour.catalog import APPS, App, custom_app, load_apps, load_release_preferences
 from appharbour.icons import MAX_ICON_BYTES, normalise_icon
 from appharbour.releases import (
     VERSION,
@@ -24,6 +24,7 @@ from appharbour.releases import (
     architecture,
     check_cancel,
     download,
+    version_key,
 )
 from appharbour.storage import atomic_bytes, atomic_json
 
@@ -46,6 +47,8 @@ class Installed:
     version: str | None
     managed: bool = False
     previous: Path | None = None
+    prerelease: bool = False
+    previous_prerelease: bool = False
 
 
 def check_appimage(path: Path) -> None:
@@ -92,7 +95,27 @@ class Library:
 
     @property
     def apps(self) -> tuple[App, ...]:
-        return load_apps(self.data_dir / "repositories.json")
+        return load_apps(
+            self.data_dir / "repositories.json", self.data_dir / "release-preferences.json"
+        )
+
+    def _save_release_preference(self, app_id: str, include: bool) -> None:
+        if type(include) is not bool:
+            raise ValueError("Invalid release preference.")
+        path = self.data_dir / "release-preferences.json"
+        preferences = load_release_preferences(path)
+        if include:
+            preferences[app_id] = True
+        else:
+            preferences.pop(app_id, None)
+        if preferences or path.exists():
+            atomic_json(path, preferences)
+
+    def set_release_preference(self, app_id: str, include: bool) -> None:
+        with self._lock():
+            if app_id not in {app.id for app in self.apps}:
+                raise ValueError("This application is not in the catalog.")
+            self._save_release_preference(app_id, include)
 
     def icon_path(self, app: App) -> Path:
         path = self.data_dir / "icons" / f"{app.id}.png"
@@ -117,13 +140,14 @@ class Library:
             atomic_bytes(directory / f"{app.id}.png", png)
 
     def add_repository(self, app: App) -> None:
-        if app != custom_app(app.repo, app.name):
+        if app != custom_app(app.repo, app.name, app.include_prereleases):
             raise ValueError("Invalid custom repository details.")
         with self._lock():
             apps = self.apps
             if any(known.repo.casefold() == app.repo.casefold() for known in apps):
                 raise ValueError("This repository is already in the catalog.")
             self.records()
+            self._save_release_preference(app.id, app.include_prereleases)
             self._save_repositories((*apps[len(APPS) :], app))
 
     def remove_repository(self, app_id: str) -> None:
@@ -136,6 +160,9 @@ class Library:
                     "Uninstall this application's managed copy before removing its repository."
                 )
             self._save_repositories(tuple(app for app in apps[len(APPS) :] if app.id != app_id))
+            # An orphan preference is harmless: adding this repository resets it.
+            with contextlib.suppress(OSError):
+                self._save_release_preference(app_id, False)
             with contextlib.suppress(OSError):
                 icon = self.data_dir / "icons" / f"{app_id}.png"
                 if not icon.parent.is_symlink():
@@ -166,10 +193,14 @@ class Library:
                     raise ValueError("Unrecognised library entry.")
                 location, version = item.get("path"), item.get("version")
                 previous, managed = item.get("previous"), item.get("managed")
+                prerelease = item.get("prerelease", False)
+                previous_prerelease = item.get("previous_prerelease", False)
                 if (
                     not isinstance(location, str)
                     or not Path(location).is_absolute()
                     or type(managed) is not bool
+                    or type(prerelease) is not bool
+                    or type(previous_prerelease) is not bool
                     or (
                         version is not None
                         and (
@@ -189,6 +220,8 @@ class Library:
                     version,
                     managed,
                     Path(previous) if previous is not None else None,
+                    prerelease,
+                    previous_prerelease,
                 )
             return result
         except (OSError, ValueError) as error:
@@ -203,6 +236,8 @@ class Library:
                     "version": item.version,
                     "managed": item.managed,
                     "previous": str(item.previous) if item.previous else None,
+                    "prerelease": item.prerelease,
+                    "previous_prerelease": item.previous_prerelease,
                 }
                 for app_id, item in records.items()
             },
@@ -309,11 +344,19 @@ class Library:
         with self._lock():
             if app not in self.apps:
                 raise ValueError("Add this repository to the catalog before installing its app.")
+            if release.prerelease and not app.include_prereleases:
+                raise ValueError(
+                    "Enable prereleases for this application before installing a preview."
+                )
             records = self.records()
             old = records.get(app.id)
             if old and not old.managed:
                 # Ignore legacy links; a successful install replaces only their registry entry.
                 old = None
+            if old and version_key(release.version) < version_key(old.version):
+                raise ValueError(
+                    "The selected release is older than the installed version; it was kept."
+                )
             root = self._owned(app, old.path) if old else self.apps_dir.resolve() / app.id
             if root.is_symlink():
                 raise ValueError("The installation folder is a symbolic link.")
@@ -357,7 +400,14 @@ class Library:
             check_cancel(cancel)
             if old and old.path == destination:
                 return old
-            installed = Installed(destination, release.version, True, old.path if old else None)
+            installed = Installed(
+                destination,
+                release.version,
+                True,
+                old.path if old else None,
+                release.prerelease,
+                old.prerelease if old else False,
+            )
             records[app.id] = installed
             try:
                 self._save(records)
@@ -385,7 +435,14 @@ class Library:
             self._owned(app, old.path)
             self._owned(app, old.previous)
             check_appimage(old.previous)
-            records[app.id] = Installed(old.previous, old.previous.parent.name, True, old.path)
+            records[app.id] = Installed(
+                old.previous,
+                old.previous.parent.name,
+                True,
+                old.path,
+                old.previous_prerelease,
+                old.prerelease,
+            )
             self._save(records)
             self._shortcut(app, old.previous)
 

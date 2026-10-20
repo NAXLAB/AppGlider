@@ -5,6 +5,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import tomllib
 from pathlib import Path
 
 
@@ -40,6 +41,13 @@ def main() -> None:
             json.loads(line) for line in result.stdout.splitlines() if line.startswith("{")
         )
         assert report["app"] == "AppHarbour" and report["icon"], report
+        project = Path(__file__).resolve().parents[1] / "pyproject.toml"
+        version = tomllib.loads(project.read_text())["project"]["version"]
+        assert report["version"] == version, report
+        assert report["header_version"] == f"v{version}", report
+        assert report["refresh_action"] == "Refresh releases", report
+        assert report["release_preferences"] == 14, report
+        assert report["card_dropdowns"] == 0, report
         assert report["https_certificates"] > 0, report
         assert report["installed"] == 0 and report["catalog"] == 14, report
         assert report["python"].startswith("3.13."), report

@@ -7,6 +7,7 @@ from threading import Event
 from PySide6.QtCore import QObject, QRunnable, Signal
 
 from appharbour.icons import IconCandidate
+from appharbour.release_info import ReleaseInfo
 from appharbour.releases import Cancelled, Progress, Release
 
 
@@ -16,6 +17,7 @@ class TaskResult:
     releases: dict[str, Release] = field(default_factory=dict)
     errors: dict[str, str] = field(default_factory=dict)
     icons: tuple[IconCandidate, ...] = ()
+    release_infos: dict[str, ReleaseInfo] = field(default_factory=dict)
 
 
 class TaskSignals(QObject):
