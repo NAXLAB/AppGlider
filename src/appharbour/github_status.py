@@ -19,8 +19,21 @@ class GitHubStatus:
     checked_at: float = 0
 
 
+# Enough observed requests left that a few overlapping release checks cannot exhaust them.
+PLENTIFUL_QUOTA = 30
+
 _status = GitHubStatus()
 _lock = Lock()
+
+
+def quota_plentiful() -> bool:
+    with _lock:
+        status = _status
+    return (
+        status.remaining is not None
+        and status.reset_at > time.time()
+        and status.remaining >= PLENTIFUL_QUOTA
+    )
 
 
 def observe_headers(headers: Mapping[str, str]) -> None:

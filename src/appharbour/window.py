@@ -60,6 +60,7 @@ from appharbour.catalog import APPS, App
 from appharbour.icons import icon_pixmap
 from appharbour.jobs import Task, TaskResult
 from appharbour.library import Installed, Library
+from appharbour.release_checks import ReleaseChecks
 from appharbour.release_info import (
     ReleaseInfo,
     cached_info,
@@ -668,11 +669,14 @@ class LauncherWindow(QMainWindow):
         self.cache_stamps: dict[str, object] = {}
         self.tray_key: list[tuple[str, str, Path, tuple[int, int, int] | None]] | None = None
         self.release_errors: dict[str, str] = {}
-        self.release_task: Task | None = None
-        self.release_queue: list[str] = []
-        self.release_checking: str | None = None
-        self.release_build_variant = ""
-        self.release_force = False
+        self.checks = ReleaseChecks(
+            self.checkable_app,
+            self.release_operation,
+            lambda: 3 if github_status.quota_plentiful() else 1,
+        )
+        self.checks.started.connect(self.release_check_started)
+        self.checks.completed.connect(self.release_check_done)
+        self.checks.drained.connect(self.release_checks_drained)
         self.background_enabled = False
         self.close_after_release = False
         self.task: Task | None = None
@@ -857,7 +861,7 @@ class LauncherWindow(QMainWindow):
         self.tabs.setTabText(1, f"Installed ({len(self.installed)})")
         self.tabs.setTabText(2, f"Updates ({update_count})")
         self.tray.setToolTip(f"AppHarbour · Updates: {update_count}")
-        self.tray_check_action.setEnabled(self.release_task is None and bool(self.installed))
+        self.tray_check_action.setEnabled(not self.checks.busy and bool(self.installed))
         tray_apps = [
             (app, self.library.icon_path(app)) for app in self.apps if app.id in self.installed
         ]
@@ -891,13 +895,13 @@ class LauncherWindow(QMainWindow):
                 self.task is not None,
                 self.check_errors.get(app_id, ""),
                 self.release_infos.get(app_id),
-                self.release_checking == app_id,
+                self.checks.is_checking(app_id),
                 self.release_errors.get(app_id, ""),
             )
             card.setVisible(app_id in ids)
         self.add_app_button.setEnabled(self.task is None)
-        self.check_button.setText("Refreshing…" if self.release_task else "Refresh releases")
-        self.check_button.setEnabled(self.release_task is None and bool(self.installed))
+        self.check_button.setText("Refreshing…" if self.checks.busy else "Refresh releases")
+        self.check_button.setEnabled(not self.checks.busy and bool(self.installed))
         self.update_all_button.setVisible(
             any(
                 item.managed and app_id in self.releases and self.has_update(app_id)
@@ -1036,12 +1040,7 @@ class LauncherWindow(QMainWindow):
                             if old.app.build_variant != app.build_variant:
                                 self.release_infos.pop(app.id, None)
                                 self.release_errors.pop(app.id, None)
-                                if (
-                                    self.release_task is not None
-                                    and app.id == self.release_checking
-                                    and app.id not in self.release_queue
-                                ):
-                                    self.release_queue.append(app.id)
+                                self.checks.requeue_active(app.id)
                             old.deleteLater()
                         self.releases.pop(app.id, None)
                         self.check_errors.pop(app.id, None)
@@ -1199,7 +1198,7 @@ class LauncherWindow(QMainWindow):
     def catalog_changed(self) -> None:
         self.scan_installed()
         if self.background_enabled:
-            self.queue_release_checks(
+            self.checks.add(
                 [
                     app.id
                     for app in self.apps
@@ -1208,87 +1207,68 @@ class LauncherWindow(QMainWindow):
             )
 
     def refresh_releases(self, *, force: bool = False) -> None:
-        if self.release_task is not None or self.close_after_release:
+        if self.checks.busy or self.close_after_release:
             return
         self.background_enabled = True
         self.scan_installed()
         if not self.installed:
             self.footer.setText("Install an application to enable release checks.")
             return
-        self.release_force = force
-        self.queue_release_checks([app.id for app in self.apps if app.id in self.installed])
+        self.checks.force = force
+        self.checks.add([app.id for app in self.apps if app.id in self.installed])
 
-    def queue_release_checks(self, app_ids: list[str]) -> None:
-        for app_id in app_ids:
-            if (
-                app_id in self.installed
-                and app_id not in self.release_queue
-                and app_id != self.release_checking
-            ):
-                self.release_queue.append(app_id)
-        if self.release_task is None:
-            self.next_release_check()
-
-    def next_release_check(self) -> None:
-        if self.close_after_release:
-            self.close()
-            return
-        apps = {app.id: app for app in self.apps}
-        while self.release_queue:
-            app_id = self.release_queue.pop(0)
-            if app_id in apps and app_id in self.installed:
-                break
-        else:
-            self.release_checking = None
-            self.refresh()
-            if self.task is None:
-                self.footer.setText(
-                    "Release refresh finished."
-                    + (
-                        " Some checks failed; cards retain previously known information."
-                        if any(app_id in self.installed for app_id in self.release_errors)
-                        else ""
-                    )
-                )
-            return
-        app = apps[app_id]
-        force = self.release_force
-
+    def release_operation(self, app: App, force: bool) -> Callable[[Event, Progress], TaskResult]:
         def operation(cancel: Event, progress: Progress) -> TaskResult:
             info = discover_releases(
                 app, cancel, self.library.data_dir / "release-cache", force=force
             )
             return TaskResult("Release checked.", release_infos={app.id: info})
 
-        self.release_checking = app.id
-        self.release_build_variant = app.build_variant
-        self.release_task = Task(operation)
-        self.release_task.signals.finished.connect(self.release_check_finished)
-        self.release_task.signals.failed.connect(self.release_check_failed)
+        return operation
+
+    def checkable_app(self, app_id: str) -> App | None:
+        if app_id not in self.installed:
+            return None
+        return next((app for app in self.apps if app.id == app_id), None)
+
+    def release_check_started(self, app_id: str) -> None:
         if self.task is None:
+            app = next(app for app in self.apps if app.id == app_id)
             self.footer.setText(f"Checking releases for {app.name}…")
         self.refresh()
-        QThreadPool.globalInstance().start(self.release_task)
 
-    def release_check_finished(self, result: TaskResult) -> None:
-        self.release_task = None
+    def release_check_done(
+        self, app_id: str, variant: str, result: TaskResult | None, error: str
+    ) -> None:
+        if result is None:
+            app = next((app for app in self.apps if app.id == app_id), None)
+            if app and app.build_variant == variant:
+                self.release_errors[app.id] = error
+            return
         for app in self.apps:
             info = result.release_infos.get(app.id)
             if info is not None:
                 if info.build_variant != app.build_variant:
-                    if app.id in self.installed and app.id not in self.release_queue:
-                        self.release_queue.append(app.id)
+                    self.checks.add([app.id])
                     continue
                 self.release_infos[app.id] = info
                 self.release_errors.pop(app.id, None)
                 self.apply_release_info(app)
-        self.next_release_check()
 
-    def release_check_failed(self, error: str) -> None:
-        app = next((app for app in self.apps if app.id == self.release_checking), None)
-        if app and app.build_variant == self.release_build_variant:
-            self.release_errors[app.id] = error
-        self.release_check_finished(TaskResult(error))
+    def release_checks_drained(self) -> None:
+        if self.close_after_release:
+            self.close()
+            return
+        self.refresh()
+        if self.task is None:
+            self.footer.setText(
+                "Release refresh finished."
+                + (
+                    " Some checks failed; cards retain previously known information."
+                    if any(app_id in self.installed for app_id in self.release_errors)
+                    else ""
+                )
+            )
 
     def install_app(self, app_id: str) -> None:
         app = next(app for app in self.apps if app.id == app_id)
@@ -1403,11 +1383,10 @@ class LauncherWindow(QMainWindow):
                 self.cancel_task()
             event.ignore()
             return
-        if self.release_task is not None:
+        if self.checks.busy:
             self.quitting = True
             self.close_after_release = True
-            self.release_queue.clear()
-            self.release_task.cancel.set()
+            self.checks.stop()
             self.tray.hide()
             self.hide()
             event.ignore()

@@ -50,6 +50,16 @@ class GitHubStatusTests(unittest.TestCase):
                 self.assertFalse(limited)
             opener.return_value.open.assert_called_once()
 
+    def test_quota_is_plentiful_only_while_a_large_fresh_count_is_known(self):
+        self.assertFalse(github_status.quota_plentiful())
+        github_status.observe_headers(self.headers)
+        self.assertTrue(github_status.quota_plentiful())
+        github_status.observe_headers({**self.headers, "X-RateLimit-Remaining": "29"})
+        self.assertFalse(github_status.quota_plentiful())
+        github_status.observe_headers(self.headers)
+        with patch.object(github_status.time, "time", return_value=1601):
+            self.assertFalse(github_status.quota_plentiful())
+
     def test_rate_limit_errors_and_restored_cooldowns_show_retry_time(self):
         headers = Message()
         for name, value in {**self.headers, "X-RateLimit-Remaining": "0"}.items():

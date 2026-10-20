@@ -465,13 +465,11 @@ class LibraryTests(unittest.TestCase):
 
     def wait_for_release_checks(self) -> None:
         deadline = time.monotonic() + 10
-        while (
-            self.window.release_task or self.window.release_queue
-        ) and time.monotonic() < deadline:
+        while (self.window.checks.busy or self.window.checks.queue) and time.monotonic() < deadline:
             QTest.qWait(10)
             time.sleep(0.001)
-        self.assertIsNone(self.window.release_task, "Background release check did not finish")
-        self.assertFalse(self.window.release_queue)
+        self.assertFalse(self.window.checks.busy, "Background release check did not finish")
+        self.assertFalse(self.window.checks.queue)
 
     def release_info(self) -> ReleaseInfo:
         payload = appimage_bytes()
@@ -492,8 +490,8 @@ class LibraryTests(unittest.TestCase):
             self.window.library.add_repository(custom_app("example/another-app"))
             self.window.catalog_changed()
             discover.assert_not_called()
-        self.assertIsNone(self.window.release_task)
-        self.assertFalse(self.window.release_queue)
+        self.assertFalse(self.window.checks.busy)
+        self.assertFalse(self.window.checks.queue)
         self.assertFalse(self.window.check_button.isEnabled())
         self.assertFalse(self.window.tray_check_action.isEnabled())
         for card in self.window.cards.values():
@@ -598,13 +596,32 @@ class LibraryTests(unittest.TestCase):
         record = Installed(Path(self.temp.name) / "example.AppImage", "0.9.0", True)
         self.window.installed = {APP.id: record, other.id: record}
         with patch("appharbour.window.QThreadPool.globalInstance") as pool:
-            self.window.queue_release_checks([APP.id, other.id])
-            self.assertEqual(self.window.release_queue, [other.id])
+            self.window.checks.add([APP.id, other.id])
+            self.assertEqual(self.window.checks.queue, [other.id])
             self.window.installed.pop(other.id)
-            self.window.release_check_finished(TaskResult("Done"))
+            self.window.checks.tasks[APP.id].signals.finished.emit(TaskResult("Done"))
             self.assertEqual(pool.return_value.start.call_count, 1)
-        self.assertIsNone(self.window.release_task)
-        self.assertFalse(self.window.release_queue)
+        self.assertFalse(self.window.checks.busy)
+        self.assertFalse(self.window.checks.queue)
+
+    def test_release_checks_overlap_only_when_quota_is_plentiful(self) -> None:
+        other = APPS[1]
+        record = Installed(Path(self.temp.name) / "example.AppImage", "0.9.0", True)
+        for plentiful, started in ((False, 1), (True, 2)):
+            with (
+                self.subTest(plentiful=plentiful),
+                patch("appharbour.window.QThreadPool.globalInstance") as pool,
+                patch("appharbour.window.github_status.quota_plentiful", return_value=plentiful),
+            ):
+                self.window.installed = {APP.id: record, other.id: record}
+                self.window.checks.add([APP.id, other.id])
+                self.assertEqual(pool.return_value.start.call_count, started)
+                self.assertEqual(len(self.window.checks.tasks), started)
+                while self.window.checks.tasks:
+                    task = next(iter(self.window.checks.tasks.values()))
+                    task.signals.finished.emit(TaskResult("Done"))
+                self.assertFalse(self.window.checks.busy)
+                self.assertFalse(self.window.checks.queue)
 
     def test_refresh_only_checks_installed_apps_and_respects_release_preferences(self) -> None:
         info = self.release_info()
@@ -743,14 +760,14 @@ class LibraryTests(unittest.TestCase):
             patch("appharbour.window.QSystemTrayIcon.isSystemTrayAvailable", return_value=False),
         ):
             self.window.refresh_releases()
-            task = self.window.release_task
+            task = self.window.checks.tasks[APP.id]
             self.assertTrue(self.window.cards[APP.id].preferences_action.isEnabled())
             self.assertFalse(self.window.close())
             self.assertTrue(task.cancel.is_set())
-            self.assertFalse(self.window.release_queue)
-            self.window.release_check_finished(TaskResult("Cancelled"))
+            self.assertFalse(self.window.checks.queue)
+            task.signals.finished.emit(TaskResult("Cancelled"))
             question.assert_not_called()
-            self.assertIsNone(self.window.release_task)
+            self.assertFalse(self.window.checks.busy)
             self.assertFalse(self.window.isVisible())
 
     def test_managed_appimage_gets_launch_action_and_installed_filter(self) -> None:

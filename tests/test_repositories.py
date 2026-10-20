@@ -660,22 +660,23 @@ class RepositoryGuiTests(unittest.TestCase):
                 self.subTest(failed=failed),
                 patch("appharbour.window.QThreadPool.globalInstance") as pool,
             ):
-                self.window.queue_release_checks([selected.id])
+                self.window.checks.add([selected.id])
                 self.library.set_build_variant(selected.id, chosen_bambu(index=0).build_variant)
                 self.window.catalog_changed()
+                signals = self.window.checks.tasks[selected.id].signals
                 if failed:
-                    self.window.release_check_failed("Old build failed")
+                    signals.failed.emit("Old build failed")
                 else:
-                    self.window.release_check_finished(
+                    signals.finished.emit(
                         TaskResult("Old build checked", release_infos={selected.id: old_info})
                     )
                 self.assertEqual(pool.return_value.start.call_count, 2)
                 self.assertEqual(
-                    self.window.release_build_variant, chosen_bambu(index=0).build_variant
+                    self.window.checks.variants[selected.id], chosen_bambu(index=0).build_variant
                 )
                 self.assertNotIn(selected.id, self.window.release_infos)
                 self.assertNotIn(selected.id, self.window.release_errors)
-                self.window.release_check_finished(TaskResult("Cancelled"))
+                self.window.checks.tasks[selected.id].signals.finished.emit(TaskResult("Cancelled"))
 
     def test_missing_variant_card_requires_choice_before_updating_and_keeps_installed_copy(self):
         selected = chosen_bambu()
@@ -693,7 +694,13 @@ class RepositoryGuiTests(unittest.TestCase):
         cache = self.library.data_dir / "release-cache"
         with patch.object(releases, "api_entries", return_value=entries):
             info = discover_releases(selected, Event(), cache, force=True)
-        self.window.release_check_finished(TaskResult("Checked", release_infos={selected.id: info}))
+        self.window.release_check_done(
+            selected.id,
+            selected.build_variant,
+            TaskResult("Checked", release_infos={selected.id: info}),
+            "",
+        )
+        self.window.refresh()
         card = self.window.cards[selected.id]
         self.assertEqual(card.action_button.text(), "Launch")
         self.assertEqual(card.update_button.text(), "Choose build")
@@ -809,10 +816,10 @@ class RepositoryGuiTests(unittest.TestCase):
         with patch("appharbour.window.discover_releases", return_value=info) as discover:
             self.window.refresh_releases()
             deadline = time.monotonic() + 10
-            while self.window.release_task is not None and time.monotonic() < deadline:
+            while self.window.checks.busy and time.monotonic() < deadline:
                 QTest.qWait(10)
                 time.sleep(0.001)
-            self.assertIsNone(self.window.release_task)
+            self.assertFalse(self.window.checks.busy)
             discover.assert_called_once()
             self.assertEqual(discover.call_args.args[0].id, CUSTOM.id)
         self.assertEqual(self.window.tabs.tabText(2), "Updates (1)")
