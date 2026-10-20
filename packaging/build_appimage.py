@@ -28,7 +28,10 @@ def download(item: dict[str, str]) -> Path:
     path = CACHE / item["name"]
     if not path.exists():
         temporary = path.with_suffix(path.suffix + ".part")
-        with urllib.request.urlopen(item["url"], timeout=120) as source:
+        request = urllib.request.Request(
+            item["url"], headers={"Accept": "application/octet-stream"}
+        )
+        with urllib.request.urlopen(request, timeout=120) as source:
             with temporary.open("wb") as target:
                 shutil.copyfileobj(source, target)
         temporary.replace(path)

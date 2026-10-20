@@ -89,6 +89,8 @@ Review these files together when updating the runtime:
 
 Some upstream tool URLs use mutable `continuous` releases. A changed download fails the
 hash check deliberately; review the replacement before updating its recorded hash.
+The AppImage runtime is pinned to a specific GitHub asset ID and SHA-256; its cache
+filename includes that ID. The download requests binary content from GitHub's asset API.
 
 ## Local cleanup
 

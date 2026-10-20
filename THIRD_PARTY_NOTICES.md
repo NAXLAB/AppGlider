@@ -54,7 +54,8 @@ prevents running the extracted application with modified libraries.
 - **AppImage runtime:** AppImage contributors; the runtime pinned in
   `packaging/downloads.json` comes from the
   [type2-runtime project](https://github.com/AppImage/type2-runtime), which provides its
-  source, runtime licence and third-party notices.
+  source, runtime licence and third-party notices. This build pins the runtime from
+  [commit fedfad51acc2860b2916a1eef32ba4a500ff31ef](https://github.com/AppImage/type2-runtime/tree/fedfad51acc2860b2916a1eef32ba4a500ff31ef).
 
 Python package metadata and upstream licence files are retained with the bundled packages.
 After extraction, this document and `ATTRIBUTION.md` are at
