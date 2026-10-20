@@ -33,11 +33,11 @@ left alone. **Installed (N)** and **Updates (N)** show library totals, even whil
 
 The AppHarbour AppImage includes Python and Qt. Use a release AppImage, or follow the
 [build instructions](docs/development.md#build-the-appimage) to create one locally.
-For version 0.2.3:
+For version 0.3.0:
 
 ```sh
-chmod +x AppHarbour-0.2.3-linux-x86_64.AppImage
-./AppHarbour-0.2.3-linux-x86_64.AppImage
+chmod +x AppHarbour-0.3.0-linux-x86_64.AppImage
+./AppHarbour-0.3.0-linux-x86_64.AppImage
 ```
 
 Keep the file in a permanent location: AppHarbour creates a menu shortcut pointing to it.
