@@ -12,6 +12,7 @@ from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PySide6.QtCore import QBuffer, QIODevice
 from PySide6.QtGui import QImage
 from PySide6.QtWidgets import QApplication
 
@@ -47,6 +48,17 @@ class IconTests(unittest.TestCase):
                 self.assertFalse(image.isNull())
                 self.assertEqual(max(image.width(), image.height()), 512)
                 self.assertTrue(png.startswith(b"\x89PNG\r\n\x1a\n"))
+
+    def test_raster_icons_are_shrunk_but_never_enlarged(self):
+        for side, expected in ((32, 32), (1024, 512)):
+            with self.subTest(side=side):
+                source = QImage(side, side, QImage.Format.Format_ARGB32)
+                source.fill(0xFF39B3D7)
+                buffer = QBuffer()
+                buffer.open(QIODevice.OpenModeFlag.WriteOnly)
+                source.save(buffer, "PNG")
+                image = QImage.fromData(normalise_icon(bytes(buffer.data().data())), "PNG")
+                self.assertEqual((image.width(), image.height()), (expected, expected))
 
     def test_invalid_large_and_external_resource_images_are_rejected(self):
         invalid = [

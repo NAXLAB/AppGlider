@@ -7,9 +7,10 @@ import os
 import shutil
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
-from threading import Event
+from threading import Event, Thread
 from unittest.mock import patch
 
 from appharbour.catalog import APPS
@@ -330,6 +331,148 @@ class LibraryTests(unittest.TestCase):
             self.assertEqual(spawn.call_args.kwargs["env"]["SSL_CERT_DIR"], "/etc/ssl/certs")
             self.assertTrue(spawn.call_args.kwargs["start_new_session"])
             self.assertNotIn("shell", spawn.call_args.kwargs)
+
+    def test_missing_ownership_marker_gives_a_clear_error_and_removes_nothing(self) -> None:
+        self.install("1.0.0")
+        installed = self.install("1.1.0")
+        (installed.path.parent.parent / ".appharbour").unlink()
+        data = appimage_bytes(b"new release")
+        for action in (
+            lambda: self.library.launch(APP, installed),
+            lambda: self.library.rollback(APP),
+            lambda: self.library.install(APP, release_for("1.1.0", data), Event(), ignore_progress),
+        ):
+            with self.assertRaisesRegex(ValueError, "not owned|another application"):
+                action()
+        self.assertTrue(installed.path.is_file())
+
+    def test_cancelled_install_leaves_no_empty_version_folder(self) -> None:
+        first = self.install("1.0.0")
+        data = appimage_bytes(b"new release")
+        cancel = Event()
+        cancel.set()
+        with (
+            patch("appharbour.releases.request", return_value=io.BytesIO(data)),
+            self.assertRaises(Cancelled),
+        ):
+            self.library.install(APP, release_for("1.1.0", data), cancel, ignore_progress)
+        self.assertFalse((first.path.parent.parent / "1.1.0").exists())
+        self.assertTrue(first.path.is_file())
+
+    def test_stale_download_files_are_cleaned_but_recent_ones_and_others_stay(self) -> None:
+        first = self.install("1.0.0")
+        root = first.path.parent.parent
+        stale, recent, other = root / ".download-old", root / ".download-new", root / "notes.txt"
+        for path in (stale, recent, other):
+            path.write_text("x")
+        old = time.time() - 48 * 60 * 60
+        os.utime(stale, (old, old))
+        self.install("1.1.0")
+        self.assertFalse(stale.exists())
+        self.assertTrue(recent.exists())
+        self.assertTrue(other.exists())
+
+    def test_uninstall_removes_empty_app_folder_but_keeps_unexpected_files(self) -> None:
+        installed = self.install("1.0.0")
+        root = installed.path.parent.parent
+        self.library.remove(APP)
+        self.assertFalse(root.exists())
+        installed = self.install("1.0.0")
+        (root / "user-data.txt").write_text("keep me")
+        self.library.remove(APP)
+        self.assertEqual((root / "user-data.txt").read_text(), "keep me")
+        self.assertTrue((root / ".appharbour").is_file())
+
+    def test_oversized_launch_log_is_rotated(self) -> None:
+        installed = self.install("1.0.0")
+        log = self.library.data_dir / "logs" / f"{APP.id}.log"
+        log.parent.mkdir(parents=True)
+        log.write_bytes(b"x" * (6 * 1024 * 1024))
+        with patch("appharbour.library.subprocess.Popen") as spawn:
+            spawn.return_value.poll.return_value = None
+            self.library.launch(APP, installed)
+        self.assertEqual(log.stat().st_size, 0)
+        self.assertEqual(log.with_name(log.name + ".1").stat().st_size, 6 * 1024 * 1024)
+
+    def test_other_changes_succeed_while_a_download_is_in_progress(self) -> None:
+        data = appimage_bytes(b"slow")
+        release = release_for("1.0.0", data)
+        started, finish = Event(), Event()
+
+        class Slow(io.BytesIO):
+            def read(self, size=-1):
+                started.set()
+                finish.wait(5)
+                return super().read(size)
+
+        outcome = []
+
+        def run() -> None:
+            try:
+                outcome.append(self.library.install(APP, release, Event(), ignore_progress))
+            except Exception as error:  # pragma: no cover - reported by the assertion below
+                outcome.append(error)
+
+        with patch("appharbour.releases.request", return_value=Slow(data)):
+            worker = Thread(target=run)
+            worker.start()
+            try:
+                self.assertTrue(started.wait(5))
+                self.library.set_release_preference(APP.id, True)
+                self.library.set_build_variant(APP.id, "")
+            finally:
+                finish.set()
+                worker.join(10)
+        self.assertEqual(len(outcome), 1)
+        self.assertIsInstance(outcome[0], Installed)
+        self.assertEqual(self.library.scan()[APP.id].version, "1.0.0")
+
+    def test_install_aborts_if_the_library_changed_during_the_download(self) -> None:
+        first = self.install("1.0.0")
+        data = appimage_bytes(b"new release")
+        release = release_for("1.1.0", data)
+        other = release_for("1.0.5", appimage_bytes(b"other"))
+
+        class Interfering(io.BytesIO):
+            def read(inner, size=-1):  # noqa: N805
+                if not inner.tell():
+                    # Another launcher activates a different version mid-download.
+                    with patch(
+                        "appharbour.releases.request",
+                        return_value=io.BytesIO(appimage_bytes(b"other")),
+                    ):
+                        self.library.install(APP, other, Event(), ignore_progress)
+                return super().read(size)
+
+        with (
+            patch("appharbour.releases.request", return_value=Interfering(data)),
+            self.assertRaisesRegex(ValueError, "library changed"),
+        ):
+            self.library.install(APP, release, Event(), ignore_progress)
+        record = self.library.scan()[APP.id]
+        self.assertEqual(record.version, "1.0.5")
+        self.assertTrue(first.path.parent.exists())
+        self.assertFalse((first.path.parent.parent / "1.1.0").exists())
+        self.assertFalse(list(first.path.parent.parent.glob(".download-*")))
+
+    def test_lock_waits_briefly_then_reports_another_launcher(self) -> None:
+        with self.library._lock():
+            with self.assertRaisesRegex(ValueError, "Another launcher"):
+                with self.library._lock(timeout=0.1):
+                    pass
+        holder = Event()
+
+        def hold() -> None:
+            with self.library._lock():
+                holder.set()
+                time.sleep(0.2)
+
+        worker = Thread(target=hold)
+        worker.start()
+        self.assertTrue(holder.wait(5))
+        with self.library._lock(timeout=3):
+            pass
+        worker.join(5)
 
     def test_launch_smoke_with_harmless_native_executable(self) -> None:
         data = bytearray(Path(shutil.which("true")).read_bytes())

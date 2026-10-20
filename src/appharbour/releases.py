@@ -11,11 +11,11 @@ from collections import Counter
 from collections.abc import Callable, Iterator
 from dataclasses import asdict, dataclass, replace
 from html.parser import HTMLParser
-from http.client import HTTPMessage
+from http.client import HTTPException, HTTPMessage
 from pathlib import Path
 from threading import Event
 from typing import IO, Any
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 from urllib.parse import quote, unquote, urljoin, urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
@@ -25,6 +25,8 @@ from appharbour.storage import atomic_json
 
 CACHE_SECONDS = 5 * 60
 RELEASE_PAGES = 3
+RETRY_DELAYS = (0.5, 1.5)
+RETRY_STATUSES = (500, 502, 503, 504)
 _RETRY_AFTER: dict[str, float] = {}
 
 MAX_METADATA = 4 * 1024 * 1024
@@ -143,6 +145,14 @@ class RateLimited(ValueError):
         )
 
 
+UNREACHABLE = "Could not reach GitHub. Check your connection and try again."
+
+
+def timed_out(error: Exception) -> bool:
+    reason = error.reason if isinstance(error, URLError) else error
+    return isinstance(reason, TimeoutError)
+
+
 def request(url: str, *, method: str = "GET") -> Any:
     if not valid_url(url):
         raise ValueError("Refusing an untrusted download location.")
@@ -150,6 +160,28 @@ def request(url: str, *, method: str = "GET") -> Any:
     if _RETRY_AFTER.get(host, 0) > time.time():
         raise RateLimited(host, _RETRY_AFTER[host])
     req = Request(url, headers={"User-Agent": f"AppHarbour/{APP_VERSION}"}, method=method)
+    for attempt in range(len(RETRY_DELAYS) + 1):
+        try:
+            return _open(req, host)
+        except HTTPError as error:
+            if error.code in RETRY_STATUSES:
+                error.close()
+                if attempt < len(RETRY_DELAYS):
+                    time.sleep(RETRY_DELAYS[attempt])
+                    continue
+                raise ValueError(
+                    f"GitHub is temporarily unavailable (HTTP {error.code}). Try again shortly."
+                ) from error
+            raise
+        except (URLError, OSError, HTTPException) as error:
+            if timed_out(error) and attempt < len(RETRY_DELAYS):
+                time.sleep(RETRY_DELAYS[attempt])
+                continue
+            raise ValueError(UNREACHABLE) from error
+    raise AssertionError("unreachable")  # pragma: no cover
+
+
+def _open(req: Request, host: str) -> Any:
     try:
         response = build_opener(GitHubRedirect()).open(req, timeout=20)
         if host == "api.github.com":
@@ -186,8 +218,13 @@ def request(url: str, *, method: str = "GET") -> Any:
 
 
 def read_metadata(url: str) -> bytes:
-    with request(url) as response:
-        data: bytes = response.read(MAX_METADATA + 1)
+    try:
+        with request(url) as response:
+            data: bytes = response.read(MAX_METADATA + 1)
+    except HTTPError:
+        raise
+    except (OSError, HTTPException) as error:
+        raise ValueError(UNREACHABLE) from error
     if len(data) > MAX_METADATA:
         raise ValueError("The release metadata is too large.")
     return data
@@ -532,8 +569,11 @@ class ReleaseAssetsParser(HTMLParser):
         attributes = dict(attrs)
         if tag == "a":
             url = urljoin("https://github.com", attributes.get("href") or "")
-            if url.lower().startswith(self.download_prefix.lower()):
-                name = unquote(url[len(self.download_prefix) :])
+            # Compare decoded paths so a tag containing "/" matches whether GitHub links it
+            # as "app/v1" or "app%2Fv1".
+            decoded, prefix = unquote(url), unquote(self.download_prefix)
+            if decoded.lower().startswith(prefix.lower()):
+                name = decoded[len(prefix) :]
                 if name in self.assets and self.assets[name]["browser_download_url"] != url:
                     raise ValueError("GitHub returned conflicting asset download links.")
                 # GitHub displays rounded sizes; HEAD supplies the exact size after selection.
@@ -737,7 +777,12 @@ def download(release: Release, destination: Path, cancel: Event, progress: Progr
     with request(release.url) as response, destination.open("wb") as output:
         while True:
             check_cancel(cancel)
-            chunk = response.read(256 * 1024)
+            try:
+                chunk = response.read(256 * 1024)
+            except (OSError, HTTPException) as error:
+                raise ValueError(
+                    "The download was interrupted. The installed version was kept."
+                ) from error
             if not chunk:
                 break
             received += len(chunk)

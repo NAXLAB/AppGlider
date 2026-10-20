@@ -11,7 +11,7 @@ from html import escape
 from pathlib import Path
 from threading import Event
 from unittest.mock import patch
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 
 from test_library import APP, appimage_bytes, release_for
@@ -110,6 +110,51 @@ class ReleaseTests(unittest.TestCase):
                 self.assertIsNone(releases.release_version(tag))
         self.assertEqual(releases.version_key("0.6"), releases.version_key("0.6.0"))
         self.assertGreater(releases.version_key("0.10"), releases.version_key("0.9.9"))
+
+    def test_network_failures_are_friendly_and_transient_ones_are_retried(self):
+        unavailable = HTTPError("https://api.github.com/", 503, "Down", Message(), io.BytesIO())
+        with (
+            patch.object(releases.time, "sleep") as sleep,
+            patch.object(releases, "build_opener") as opener,
+        ):
+            opener.return_value.open.side_effect = [unavailable, TimeoutError(), Response("ok")]
+            self.assertEqual(releases.request("https://api.github.com/").url, "ok")
+            self.assertEqual(sleep.call_count, 2)
+            opener.return_value.open.side_effect = [unavailable] * 3
+            with self.assertRaisesRegex(ValueError, "temporarily unavailable.*503"):
+                releases.request("https://api.github.com/")
+            opener.return_value.open.side_effect = URLError(OSError("Name or service not known"))
+            opener.return_value.open.reset_mock()
+            with self.assertRaisesRegex(ValueError, "Could not reach GitHub"):
+                releases.request("https://api.github.com/")
+            opener.return_value.open.assert_called_once()
+            opener.return_value.open.side_effect = ConnectionResetError()
+            with self.assertRaisesRegex(ValueError, "Could not reach GitHub"):
+                releases.read_metadata("https://api.github.com/")
+
+    def test_interrupted_download_reports_a_plain_error(self):
+        class Broken(io.BytesIO):
+            def read(self, size=-1):
+                raise ConnectionResetError()
+
+        with patch.object(releases, "request", return_value=Broken()):
+            with self.assertRaisesRegex(ValueError, "download was interrupted"):
+                releases.download(
+                    self.release, self.cache / "download", Event(), lambda *args: None
+                )
+
+    def test_public_asset_links_match_slash_tags_in_either_form(self):
+        app = custom_app("getcadcraft/studio")
+        name = "CadCraft-Studio-0.6-x86_64.AppImage"
+        prefix = f"{app.source_url}/releases/download/{quote('studio/v0.6.0', safe='')}/"
+        for href in (prefix + name, f"{app.source_url}/releases/download/studio/v0.6.0/{name}"):
+            with self.subTest(href=href):
+                parser = releases.ReleaseAssetsParser(prefix)
+                parser.feed(f'<a href="{href}">{name}</a>')
+                self.assertEqual(list(parser.assets), [name])
+        parser = releases.ReleaseAssetsParser(prefix)
+        parser.feed(f'<a href="{app.source_url}/releases/download/studio/v9.9.9/{name}">x</a>')
+        self.assertEqual(parser.assets, {})
 
     def test_cadcraft_prefixed_and_short_tags_agree_across_discovery_paths(self):
         app = custom_app("getcadcraft/studio")

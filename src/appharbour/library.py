@@ -8,6 +8,7 @@ import os
 import re
 import subprocess
 import tempfile
+import time
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -35,6 +36,10 @@ from appharbour.releases import (
 )
 from appharbour.storage import atomic_bytes, atomic_json
 
+MAX_LOG_BYTES = 5 * 1024 * 1024
+STALE_STAGE_SECONDS = 24 * 60 * 60
+LOCK_WAIT_SECONDS = 3.0
+
 
 def desktop_exec(arguments: list[str]) -> str:
     quoted = []
@@ -56,6 +61,15 @@ class Installed:
     previous: Path | None = None
     prerelease: bool = False
     previous_prerelease: bool = False
+
+
+@dataclass(frozen=True)
+class _InstallPlan:
+    root: Path
+    old: Installed | None
+    destination: Path
+    exists: bool
+    made_root: bool
 
 
 def check_appimage(path: Path) -> None:
@@ -279,15 +293,20 @@ class Library:
         )
 
     @contextlib.contextmanager
-    def _lock(self) -> Iterator[None]:
+    def _lock(self, timeout: float = LOCK_WAIT_SECONDS) -> Iterator[None]:
         self.data_dir.mkdir(parents=True, exist_ok=True)
         with (self.data_dir / "library.lock").open("a") as lock:
-            try:
-                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except BlockingIOError as error:
-                raise ValueError(
-                    "Another launcher is changing this library. Try again shortly."
-                ) from error
+            deadline = time.monotonic() + timeout
+            while True:
+                try:
+                    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError as error:
+                    if time.monotonic() >= deadline:
+                        raise ValueError(
+                            "Another launcher is changing this library. Try again shortly."
+                        ) from error
+                    time.sleep(0.05)
             try:
                 yield
             finally:
@@ -331,6 +350,9 @@ class Library:
             environment.pop(name, None)
         log = self.data_dir / "logs" / f"{app.id}.log"
         log.parent.mkdir(parents=True, exist_ok=True)
+        with contextlib.suppress(OSError):
+            if log.stat().st_size > MAX_LOG_BYTES:
+                os.replace(log, log.with_name(log.name + ".1"))
         with log.open("ab") as output:
             self.processes = {
                 key: proc for key, proc in self.processes.items() if proc.poll() is None
@@ -353,6 +375,12 @@ class Library:
     def _marker(self, app: App) -> str:
         return f"AppHarbour\n{app.id}\n{app.repo}\n"
 
+    def _has_marker(self, root: Path, app: App) -> bool:
+        try:
+            return (root / ".appharbour").read_text() == self._marker(app)
+        except (OSError, UnicodeDecodeError):
+            return False
+
     def _owned(self, app: App, path: Path) -> Path:
         root = path.parent.parent
         if (
@@ -362,10 +390,21 @@ class Library:
             or path.is_symlink()
             or not re.fullmatch(VERSION, path.parent.name)
             or path.suffix.lower() != ".appimage"
-            or (root / ".appharbour").read_text() != self._marker(app)
+            or not self._has_marker(root, app)
         ):
             raise ValueError("This path is not owned by AppHarbour; it was left untouched.")
         return root
+
+    def _clear_stale_stages(self, root: Path) -> None:
+        # Interrupted downloads leave hidden staging files; only old regular files qualify.
+        with contextlib.suppress(OSError):
+            for stage in root.glob(".download-*"):
+                if (
+                    not stage.is_symlink()
+                    and stage.is_file()
+                    and time.time() - stage.stat().st_mtime > STALE_STAGE_SECONDS
+                ):
+                    stage.unlink()
 
     def _remove_file(self, app: App, path: Path) -> None:
         self._owned(app, path)
@@ -375,64 +414,140 @@ class Library:
         with contextlib.suppress(OSError):
             path.parent.rmdir()
 
-    def install(self, app: App, release: Release, cancel: Event, progress: Progress) -> Installed:
-        with self._lock():
-            if app not in self.apps:
-                raise ValueError("Add this repository to the catalog before installing its app.")
-            if release.prerelease and not app.include_prereleases:
-                raise ValueError(
-                    "Enable prereleases for this application before installing a preview."
-                )
-            records = self.records()
-            old = records.get(app.id)
-            if old and not old.managed:
-                # Ignore legacy links; a successful install replaces only their registry entry.
-                old = None
-            if old and version_key(release.version) < version_key(old.version):
-                raise ValueError(
-                    "The selected release is older than the installed version; it was kept."
-                )
-            root = self._owned(app, old.path) if old else self.apps_dir.resolve() / app.id
-            if root.is_symlink():
-                raise ValueError("The installation folder is a symbolic link.")
-            if root.exists():
-                if (root / ".appharbour").read_text() != self._marker(app):
-                    raise ValueError("The installation folder belongs to another application.")
-            else:
-                root.mkdir(parents=True)
-                (root / ".appharbour").write_text(self._marker(app))
-            if (
-                not re.fullmatch(VERSION, release.version)
-                or Path(release.name).name != release.name
-            ):
-                raise ValueError("The release has an unsafe filename or version.")
+    def _install_checks(
+        self, app: App, release: Release
+    ) -> tuple[dict[str, Installed], Installed | None]:
+        # Settings may change during a download, so use the catalog's current preferences.
+        current = next((a for a in self.apps if a.id == app.id and a.repo == app.repo), None)
+        if current is None:
+            raise ValueError("Add this repository to the catalog before installing its app.")
+        if release.prerelease and not current.include_prereleases:
+            raise ValueError("Enable prereleases for this application before installing a preview.")
+        if not re.fullmatch(VERSION, release.version) or Path(release.name).name != release.name:
+            raise ValueError("The release has an unsafe filename or version.")
+        records = self.records()
+        old = records.get(app.id)
+        if old and not old.managed:
+            # Ignore legacy links; a successful install replaces only their registry entry.
+            old = None
+        if old and version_key(release.version) < version_key(old.version):
+            raise ValueError(
+                "The selected release is older than the installed version; it was kept."
+            )
+        return records, old
+
+    def _prepare_install(self, app: App, release: Release) -> _InstallPlan:
+        _, old = self._install_checks(app, release)
+        root = self._owned(app, old.path) if old else self.apps_dir.resolve() / app.id
+        if root.is_symlink():
+            raise ValueError("The installation folder is a symbolic link.")
+        made_root = not root.exists()
+        if made_root:
+            root.mkdir(parents=True)
+            (root / ".appharbour").write_text(self._marker(app))
+        elif not self._has_marker(root, app):
+            raise ValueError("The installation folder belongs to another application.")
+        try:
+            self._clear_stale_stages(root)
             version_dir = root / release.version
             if version_dir.is_symlink():
                 raise ValueError("The installation folder is a symbolic link.")
-            version_dir.mkdir(exist_ok=True)
             destination = version_dir / release.name
             if destination.is_symlink():
                 raise ValueError("The installed file is a symbolic link.")
-            created = not destination.exists()
-            if not created:
-                with destination.open("rb") as source:
-                    digest = hashlib.file_digest(source, "sha256").hexdigest()
-                if digest != release.sha256 or destination.stat().st_size != release.size:
-                    raise ValueError("The existing version has a different checksum; it was kept.")
-                check_appimage(destination)
-            else:
-                fd, temporary = tempfile.mkstemp(prefix=".download-", dir=root)
+            exists = destination.exists()
+            if exists:
+                self._verify_existing(release, destination)
+        except BaseException:
+            if made_root:
+                self._remove_empty_root(root)
+            raise
+        return _InstallPlan(root, old, destination, exists, made_root)
+
+    def _verify_existing(self, release: Release, destination: Path) -> None:
+        with destination.open("rb") as source:
+            digest = hashlib.file_digest(source, "sha256").hexdigest()
+        if digest != release.sha256 or destination.stat().st_size != release.size:
+            raise ValueError("The existing version has a different checksum; it was kept.")
+        check_appimage(destination)
+
+    def _remove_empty_root(self, root: Path) -> None:
+        # Drop the ownership marker and folder only when nothing else is left inside.
+        with contextlib.suppress(OSError):
+            marker = root / ".appharbour"
+            if [entry.name for entry in root.iterdir()] == [marker.name]:
+                marker.unlink()
+                root.rmdir()
+
+    def install(self, app: App, release: Release, cancel: Event, progress: Progress) -> Installed:
+        # The download runs outside the library lock so other changes are not blocked by it.
+        with self._lock():
+            plan = self._prepare_install(app, release)
+        if plan.old and plan.exists and plan.old.path == plan.destination:
+            check_cancel(cancel)
+            return plan.old
+        stage: Path | None = None
+        try:
+            if not plan.exists:
+                fd, temporary = tempfile.mkstemp(prefix=".download-", dir=plan.root)
                 os.close(fd)
                 stage = Path(temporary)
-                try:
-                    download(release, stage, cancel, progress)
-                    check_appimage(stage)
-                    check_cancel(cancel)
-                    stage.chmod(0o755)
-                    os.replace(stage, destination)
-                finally:
-                    stage.unlink(missing_ok=True)
+                download(release, stage, cancel, progress)
+                check_appimage(stage)
+                stage.chmod(0o755)
             check_cancel(cancel)
+            with self._lock():
+                installed = self._activate_install(app, release, plan, stage)
+                old = plan.old
+                if old and old.previous and old.previous != installed.path:
+                    with contextlib.suppress(OSError, ValueError):
+                        self._remove_file(app, old.previous)
+                try:
+                    self._shortcut(app, installed.path)
+                except OSError as error:
+                    raise ValueError(
+                        f"{app.name} was installed, but its shortcut could not be saved: {error}"
+                    ) from error
+        except BaseException:
+            if stage is not None:
+                stage.unlink(missing_ok=True)
+            if plan.made_root and not plan.exists:
+                self._remove_empty_root(plan.root)
+            raise
+        finally:
+            if stage is not None:
+                stage.unlink(missing_ok=True)
+        return installed
+
+    def _activate_install(
+        self, app: App, release: Release, plan: _InstallPlan, stage: Path | None
+    ) -> Installed:
+        records, old = self._install_checks(app, release)
+        if old != plan.old:
+            raise ValueError(
+                f"The library changed while {app.name} was downloading. Try the update again."
+            )
+        destination = plan.destination
+        version_dir = destination.parent
+        if version_dir.is_symlink() or destination.is_symlink():
+            raise ValueError("The installation folder is a symbolic link.")
+        made_dir = not version_dir.exists()
+        created = False
+        try:
+            version_dir.mkdir(exist_ok=True)
+            if destination.exists():
+                if plan.exists:
+                    # Hashed when prepared; only re-check what could change cheaply.
+                    check_appimage(destination)
+                    if destination.stat().st_size != release.size:
+                        raise ValueError("The existing version changed; it was kept.")
+                else:
+                    self._verify_existing(release, destination)
+            elif stage is not None:
+                os.replace(stage, destination)
+                created = True
+            else:
+                raise ValueError("The downloaded file is missing. Try the update again.")
             if old and old.path == destination:
                 return old
             installed = Installed(
@@ -444,22 +559,16 @@ class Library:
                 old.prerelease if old else False,
             )
             records[app.id] = installed
-            try:
-                self._save(records)
-            except OSError:
-                if created:
-                    destination.unlink()
-                raise
-            if old and old.previous and old.previous != destination:
-                with contextlib.suppress(OSError, ValueError):
-                    self._remove_file(app, old.previous)
-            try:
-                self._shortcut(app, installed.path)
-            except OSError as error:
-                raise ValueError(
-                    f"{app.name} was installed, but its shortcut could not be saved: {error}"
-                ) from error
-            return installed
+            self._save(records)
+        except BaseException:
+            if created:
+                with contextlib.suppress(OSError):
+                    destination.unlink(missing_ok=True)
+            if made_dir:
+                with contextlib.suppress(OSError):
+                    version_dir.rmdir()
+            raise
+        return installed
 
     def rollback(self, app: App) -> None:
         with self._lock():
@@ -488,6 +597,7 @@ class Library:
             if not old or not old.managed:
                 raise ValueError("Only applications installed by this launcher can be removed.")
             paths = list(dict.fromkeys(p for p in (old.path, old.previous) if p is not None))
+            root = self._owned(app, old.path)
             for path in paths:
                 self._owned(app, path)
                 if running(path):
@@ -532,6 +642,7 @@ class Library:
                     errors.append(f"{stage}: {error}")
                 with contextlib.suppress(OSError):
                     path.parent.rmdir()
+            self._remove_empty_root(root)
             shortcut = self.desktop_dir / f"appharbour-{app.id}.desktop"
             try:
                 if (

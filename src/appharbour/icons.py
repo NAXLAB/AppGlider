@@ -75,7 +75,9 @@ def normalise_icon(data: bytes) -> bytes:
     size = reader.size()
     if not size.isValid() or max(size.width(), size.height()) > 4096:
         raise ValueError("Icon dimensions must be between 1 and 4096 pixels.")
-    reader.setScaledSize(size.scaled(QSize(512, 512), Qt.AspectRatioMode.KeepAspectRatio))
+    # SVG scales losslessly to 512; raster icons are only ever shrunk, never enlarged.
+    if kind == b"svg" or max(size.width(), size.height()) > 512:
+        reader.setScaledSize(size.scaled(QSize(512, 512), Qt.AspectRatioMode.KeepAspectRatio))
     image = reader.read()
     if image.isNull():
         raise ValueError("The icon image could not be read.")

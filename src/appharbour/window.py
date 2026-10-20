@@ -1302,13 +1302,19 @@ class LauncherWindow(QMainWindow):
             and self.installed[app.id].managed
         ]
 
+        versions = {app.id: self.installed[app.id].version for app in apps}
+
         def operation(cancel: Event, progress: Progress) -> TaskResult:
             result = TaskResult("Updates finished.")
+            updated: list[str] = []
             for app in apps:
                 check_cancel(cancel)
                 progress(f"Checking {app.name}…", 0, 0)
                 try:
                     release = latest_release(app, cancel, self.library.data_dir / "release-cache")
+                    if not release.newer_than(versions[app.id]):
+                        result.releases[app.id] = release
+                        continue
                     self.library.install(
                         app,
                         release,
@@ -1318,11 +1324,12 @@ class LauncherWindow(QMainWindow):
                         ),
                     )
                     result.releases[app.id] = release
+                    updated.append(app.id)
                 except BuildChoiceRequired as error:
                     result.build_choices[app.id] = error
                 except (OSError, ValueError) as error:
                     result.errors[app.id] = str(error)
-            result.message = f"Updated {len(result.releases)} apps."
+            result.message = f"Updated {len(updated)} apps."
             return result
 
         if apps:

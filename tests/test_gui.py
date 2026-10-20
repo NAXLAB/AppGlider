@@ -815,6 +815,37 @@ class LibraryTests(unittest.TestCase):
             self.assertTrue(card.update_button.isVisible())
             warning.assert_not_called()
 
+    def test_update_all_counts_only_apps_that_were_really_updated(self) -> None:
+        card = self.window.cards[APP.id]
+        first_payload = appimage_bytes(b"1.0.0")
+        first = release_for("1.0.0", first_payload)
+        with patch("appharbour.releases.request", return_value=io.BytesIO(first_payload)):
+            self.window.library.install(APP, first, Event(), lambda *args: None)
+        self.window.scan_installed()
+        newer_payload = appimage_bytes(b"1.1.0")
+        newer = release_for("1.1.0", newer_payload)
+        with patch("appharbour.window.QMessageBox.warning") as warning:
+            for latest, expected, version in ((first, "Updated 0 apps.", "1.0.0"),):
+                self.window.releases[APP.id] = newer
+                self.window.refresh()
+                with patch("appharbour.window.latest_release", return_value=latest):
+                    self.window.update_all()
+                    self.wait_for_task()
+                self.assertEqual(self.window.footer.text(), expected)
+                self.assertEqual(self.window.installed[APP.id].version, version)
+            self.window.releases[APP.id] = newer
+            self.window.refresh()
+            with (
+                patch("appharbour.window.latest_release", return_value=newer),
+                patch("appharbour.releases.request", return_value=io.BytesIO(newer_payload)),
+            ):
+                self.window.update_all()
+                self.wait_for_task()
+            self.assertEqual(self.window.footer.text(), "Updated 1 apps.")
+            self.assertEqual(self.window.installed[APP.id].version, "1.1.0")
+            self.assertTrue(card.rollback_action.isEnabled())
+            warning.assert_not_called()
+
     def test_busy_state_cancellation_and_launch_stays_available(self) -> None:
         payload = appimage_bytes()
         with patch("appharbour.releases.request", return_value=io.BytesIO(payload)):
