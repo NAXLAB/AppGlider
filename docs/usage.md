@@ -38,7 +38,7 @@ launching the replacement; it does not currently update itself.
 
 ## Stable and prerelease versions
 
-Stable releases are the default. Use **⋯ → Release preferences…** on a card, or
+Stable releases are the default. Use **⋯ → Application preferences…** on a card, or
 **Settings → Applications → Repositories…**, to include previews for that application. It applies to
 built-in apps and added repositories, survives restarts and is used by future updates.
 **Check available release** previews the choice without installing anything.
@@ -103,7 +103,9 @@ Discovery examines a bounded set of likely repository files, so some projects ne
 manual choice. An unavailable icon or GitHub quota error does not prevent adding a valid
 application; AppHarbour's icon is the fallback. Embedded AppImage icons are not extracted.
 
-Supported release tags include `v1.2.3`, `1.2.3` and `v1.2.3-beta.1`. AppHarbour inspects
+Supported release tags include `v1.2.3`, `1.2.3`, `v1.2.3-beta.1` and four-part versions
+such as Bambu Studio's `v02.08.02.61`. Numeric components are compared numerically;
+GitHub's release flags determine whether a release is stable or a preview. AppHarbour inspects
 the release's actual assets for filenames ending in `.AppImage`, ignoring letter case. The repository
 name, version placement, separators and word `linux` are not required. Companion files
 such as `.AppImage.zsync` and `.AppImage.asc` are excluded.
@@ -115,8 +117,23 @@ checks the actual file's CPU architecture and AppImage header before activating 
 The AppHarbour launcher package currently targets Linux x86_64 only.
 
 When several candidates fit, familiar repository-based filenames retain their existing
-preference. If that does not identify one file, inspection or update checking reports
-the ambiguous filenames and stops. There is no manual asset picker yet.
+preference. If that does not identify one file, a **Build variant** selector appears.
+Choose the appropriate build (for example, Bambu Studio's Ubuntu 22.04 or Ubuntu 24.04)
+before adding the repository. Single matching downloads need no extra choice.
+
+The choice is remembered separately from **Stable releases only** / **Stable and prerelease
+versions** and follows that variant across releases, ignoring version numbers and build dates.
+Use **⋯ → Application preferences… → Build variant → Choose another build…** to change it.
+Details show the selected build and installed filename; full candidate filenames are also
+available as tooltips in the selector. AppHarbour does not detect distribution compatibility:
+choose a build appropriate for your system using the project's guidance.
+
+If the saved variant disappears or becomes ambiguous, an installed card shows **Choose build**.
+AppHarbour keeps the installed copy and waits for an explicit selection instead of switching
+builds. Changing the preference affects future installs and updates; it does not replace
+an installed app immediately. Choosing and inspecting builds does not download AppImages.
+Upstream filename changes can require confirmation too: Bambu Studio's `ubuntu22.04`
+and `ubu22` names are treated as different variants until you select the new name.
 
 A published SHA-256 checksum is required. GitHub's asset digest is used when available;
 otherwise the release must provide a matching entry in `SHA256SUMS.txt`. When GitHub's

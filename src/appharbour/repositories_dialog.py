@@ -1,9 +1,10 @@
 """Inspect and save custom GitHub repositories without blocking the desktop UI."""
 
+from dataclasses import replace
 from pathlib import Path
 from threading import Event
 
-from PySide6.QtCore import QSize, Qt, QThreadPool, Signal
+from PySide6.QtCore import QSize, Qt, QThreadPool, QTimer, Signal
 from PySide6.QtGui import QCloseEvent, QIcon, QPixmap
 from PySide6.QtWidgets import (
     QComboBox,
@@ -38,7 +39,13 @@ from appharbour.icons import (
 from appharbour.jobs import Task, TaskResult
 from appharbour.library import Library
 from appharbour.release_info import remember_release
-from appharbour.releases import Progress, Release, architecture, latest_release
+from appharbour.releases import (
+    Progress,
+    Release,
+    architecture,
+    latest_release,
+    variant_label,
+)
 from appharbour.version_label import VersionLabel
 
 
@@ -57,6 +64,8 @@ class RepositoriesDialog(QDialog):
         self.selected_icon: bytes | None = None
         self.closing = False
         self.adding = False
+        self.build_override: str | None = None
+        self.inspection_app: App | None = None
         self.setWindowTitle("Repositories")
         self.setObjectName("repositoriesDialog")
         self.setMinimumWidth(800)
@@ -144,8 +153,8 @@ class RepositoriesDialog(QDialog):
         self.name = QLineEdit()
         self.name.setPlaceholderText("Optional display name")
         self.name.setAccessibleName("Application name")
-        self.url.textChanged.connect(self.invalidate_preview)
-        self.name.textChanged.connect(self.invalidate_preview)
+        self.url.textChanged.connect(lambda _: self.invalidate_preview())
+        self.name.textChanged.connect(lambda _: self.invalidate_preview())
         form.addRow("Repository", self.url)
         form.addRow("Name", self.name)
         add_layout.addLayout(form)
@@ -174,6 +183,28 @@ class RepositoriesDialog(QDialog):
         self.check_release_button.clicked.connect(self.inspect_repository)
         options_layout.addWidget(self.check_release_button)
         editor.addWidget(release_options)
+        self.build_group = QGroupBox("Build variant")
+        build_layout = QVBoxLayout(self.build_group)
+        self.build_combo = QComboBox()
+        self.build_combo.setAccessibleName("AppImage build variant")
+        self.build_combo.setItemDelegate(QStyledItemDelegate(self.build_combo))
+        self.build_combo.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
+        )
+        self.build_combo.setMinimumContentsLength(20)
+        self.build_combo.currentIndexChanged.connect(self.change_build_variant)
+        build_layout.addWidget(self.build_combo)
+        build_note = QLabel(
+            "Choose the build suitable for your system. This choice is remembered for updates."
+        )
+        build_note.setWordWrap(True)
+        build_note.setObjectName("muted")
+        build_layout.addWidget(build_note)
+        self.choose_build_button = QPushButton("Choose another build…")
+        self.choose_build_button.clicked.connect(self.choose_build)
+        build_layout.addWidget(self.choose_build_button)
+        editor.addWidget(self.build_group)
+        self.build_group.hide()
         self.release_preview = QGroupBox("Available release")
         preview = QFormLayout(self.release_preview)
         self.version_label = VersionLabel()
@@ -280,6 +311,10 @@ class RepositoriesDialog(QDialog):
         selected = item.data(Qt.ItemDataRole.UserRole) if item else None
         app = next((app for app in self.library.apps if app.id == selected), None)
         self.selected_app = app
+        if app and app.build_variant:
+            self.show_build_choices(
+                ((app.build_variant, variant_label(app.build_variant)),), app.build_variant
+            )
         self.release_channel.blockSignals(True)
         self.release_channel.setCurrentIndex(int(bool(app and app.include_prereleases)))
         self.release_channel.blockSignals(False)
@@ -332,7 +367,7 @@ class RepositoriesDialog(QDialog):
         if self.task is not None:
             return
         if self.adding:
-            self.invalidate_preview()
+            self.invalidate_preview(clear_icons=False)
             return
         app = self.selected_app
         if app is None:
@@ -354,11 +389,12 @@ class RepositoriesDialog(QDialog):
         )
         self.catalog_changed.emit()
 
-    def invalidate_preview(self) -> None:
+    def invalidate_preview(self, *, clear_build: bool = True, clear_icons: bool = True) -> None:
         self.candidate = None
         self.release = None
         self.icon_target = None
-        self.set_icon_options(())
+        if clear_icons:
+            self.set_icon_options(())
         self.choose_icon_button.setEnabled(False)
         self.icon_choices.setEnabled(False)
         self.add_button.setEnabled(False)
@@ -368,42 +404,83 @@ class RepositoriesDialog(QDialog):
         self.status.setText("Inspect this repository before adding it.")
         self.release_preview.hide()
         self.icon_group.hide()
+        if clear_build:
+            self.build_override = None
+            self.build_combo.blockSignals(True)
+            self.build_combo.clear()
+            self.build_combo.blockSignals(False)
+            self.build_group.hide()
         self.update_remove_button()
+
+    def show_build_choices(self, choices: tuple[tuple[str, str], ...], selected: str = "") -> None:
+        self.build_combo.blockSignals(True)
+        self.build_combo.clear()
+        self.build_combo.addItem("Choose a build…", "")
+        for pattern, filename in choices:
+            self.build_combo.addItem(variant_label(pattern), pattern)
+            self.build_combo.setItemData(
+                self.build_combo.count() - 1, filename, Qt.ItemDataRole.ToolTipRole
+            )
+        self.build_combo.setCurrentIndex(max(0, self.build_combo.findData(selected)))
+        self.build_combo.blockSignals(False)
+        self.choose_build_button.setVisible(not self.adding and bool(selected))
+        self.build_group.show()
+        QTimer.singleShot(0, self, lambda: self.editor_scroll.ensureWidgetVisible(self.build_group))
+
+    def choose_build(self) -> None:
+        if self.task is None:
+            self.build_override = ""
+            self.inspect_repository()
+
+    def change_build_variant(self) -> None:
+        if self.task is not None or not self.build_combo.currentData():
+            return
+        self.build_override = str(self.build_combo.currentData())
+        self.inspect_repository()
 
     def inspect_repository(self) -> None:
         if self.task is not None:
             return
         if self.adding:
-            self.invalidate_preview()
+            self.invalidate_preview(clear_build=False, clear_icons=False)
             try:
                 app = custom_app(
                     self.url.text(),
                     self.name.text() or None,
                     self.release_channel.currentIndex() == 1,
+                    self.build_override or "",
                 )
                 if any(known.repo.casefold() == app.repo.casefold() for known in self.library.apps):
                     raise ValueError("This repository is already in the catalog.")
             except (OSError, ValueError) as error:
                 self.status.setText(str(error))
                 return
+            self.name.blockSignals(True)
             self.name.setText(app.name)
+            self.name.blockSignals(False)
             self.candidate = app
             self.icon_target = app
         elif self.selected_app is not None:
-            app = self.selected_app
+            app = (
+                replace(self.selected_app, build_variant=self.build_override)
+                if self.build_override is not None
+                else self.selected_app
+            )
             self.release = None
         else:
             return
         adding = self.adding
+        lookup_icons = adding and not self.icon_options
+        self.inspection_app = app
 
         def operation(cancel: Event, progress: Progress) -> TaskResult:
             release = latest_release(app, cancel, self.library.data_dir / "release-cache")
             result = TaskResult("Release inspected.", {app.id: release})
             try:
-                if adding:
+                if lookup_icons:
                     result.icons = discover_icons(app, cancel)
-            except (OSError, ValueError):
-                result.message = "Release inspected. Icon lookup unavailable."
+            except (OSError, ValueError) as error:
+                result.errors[app.id] = f"Icon lookup unavailable: {error}"
             return result
 
         self.task = Task(operation)
@@ -414,6 +491,8 @@ class RepositoriesDialog(QDialog):
         QThreadPool.globalInstance().start(self.task)
 
     def set_busy(self, busy: bool) -> None:
+        self.build_combo.setEnabled(not busy)
+        self.choose_build_button.setEnabled(not busy)
         self.release_channel.setEnabled(not busy)
         self.check_release_button.setVisible(not self.adding)
         self.check_release_button.setEnabled(not busy and self.selected_app is not None)
@@ -441,11 +520,38 @@ class RepositoriesDialog(QDialog):
         if self.closing:
             super().reject()
             return
-        target = self.candidate if self.adding else self.selected_app
+        target = self.inspection_app
+        if result.build_choices and target:
+            error = result.build_choices[target.id]
+            self.show_build_choices(error.choices)
+            self.status.setText(
+                "Your saved build is unavailable. Choose a replacement to continue."
+                if error.missing
+                else "Multiple builds are available. Choose a build variant to continue."
+            )
+            return
         self.release = result.releases.get(target.id) if target else None
         if self.release is None:
             self.status.setText(result.message)
             return
+        build_changed = bool(
+            target and self.selected_app and target.build_variant != self.selected_app.build_variant
+        )
+        if build_changed and target and self.selected_app:
+            try:
+                self.library.set_build_variant(target.id, target.build_variant)
+            except (OSError, ValueError) as error:
+                self.release = None
+                self.build_override = None
+                self.build_combo.blockSignals(True)
+                self.build_combo.setCurrentIndex(
+                    max(0, self.build_combo.findData(self.selected_app.build_variant))
+                )
+                self.build_combo.blockSignals(False)
+                self.status.setText(f"Build preference could not be saved: {error}")
+                return
+            self.selected_app = target
+            self.icon_target = target if target.asset_stem else None
         if target is not None:
             remember_release(target, self.release, self.library.data_dir / "release-cache")
         self.version_label.set_version(
@@ -456,14 +562,29 @@ class RepositoriesDialog(QDialog):
         self.filename.setText(self.release.name)
         self.checksum.setText("Published SHA-256 available; verified when downloaded")
         if self.adding:
-            self.set_icon_options(result.icons)
+            if not self.icon_options:
+                self.set_icon_options(result.icons)
             self.status.setText(
-                "Ready to add." if result.icons else "Ready to add with the default icon."
+                (
+                    "Ready to add."
+                    if self.selected_icon is not None
+                    else "Ready to add with the default icon."
+                )
+                + (" " + result.errors[target.id] if target and target.id in result.errors else "")
             )
         else:
-            self.status.setText("Release checked. Close this window to return to the library.")
+            self.status.setText(
+                "Build preference saved for future installs and updates. "
+                "The installed copy was kept."
+                if build_changed
+                else "Release checked. Close this window to return to the library."
+            )
             self.catalog_changed.emit()
         self.set_busy(False)
+
+        QTimer.singleShot(
+            0, self, lambda: self.editor_scroll.ensureWidgetVisible(self.release_preview)
+        )
 
     def inspection_failed(self, error: str) -> None:
         self.inspection_finished(TaskResult(error))

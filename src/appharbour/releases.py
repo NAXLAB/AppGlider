@@ -7,6 +7,7 @@ import os
 import platform
 import re
 import time
+from collections import Counter
 from collections.abc import Callable, Iterator
 from dataclasses import asdict, dataclass, replace
 from html.parser import HTMLParser
@@ -28,7 +29,7 @@ _RETRY_AFTER: dict[str, float] = {}
 
 MAX_METADATA = 4 * 1024 * 1024
 MAX_DOWNLOAD = 4 * 1024 * 1024 * 1024
-VERSION = r"\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?(?:\+[A-Za-z0-9.-]+)?"
+VERSION = r"\d+\.\d+\.\d+(?:\.\d+)?(?:-[A-Za-z0-9.-]+)?(?:\+[A-Za-z0-9.-]+)?"
 Progress = Callable[[str, int, int], None]
 ASSET_ARCHITECTURES = {
     "x86_64": ("x86_64", "x86-64", "x64", "amd64"),
@@ -76,15 +77,24 @@ def stems(app: App) -> tuple[str, ...]:
     return (app.id, former[app.id]) if app.id in former else (app.id,)
 
 
-def version_key(version: str | None) -> tuple[int, int, int, int, tuple[tuple[int, int, str], ...]]:
-    match = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)(?:-([^+]+))?(?:\+.*)?", version or "")
+def version_key(
+    version: str | None,
+) -> tuple[int, int, int, int, int, tuple[tuple[int, int, str], ...]]:
+    match = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)(?:\.(\d+))?(?:-([^+]+))?(?:\+.*)?", version or "")
     if not match:
-        return (0, 0, 0, 0, ())
-    suffix = match[4] or ""
+        return (0, 0, 0, 0, 0, ())
+    suffix = match[5] or ""
     identifiers = tuple(
         (0, int(part), "") if part.isdigit() else (1, 0, part) for part in suffix.split(".") if part
     )
-    return (int(match[1]), int(match[2]), int(match[3]), int(not suffix), identifiers)
+    return (
+        int(match[1]),
+        int(match[2]),
+        int(match[3]),
+        int(match[4] or 0),
+        int(not suffix),
+        identifiers,
+    )
 
 
 def valid_url(url: str) -> bool:
@@ -193,6 +203,58 @@ def preferred_asset_names(app: App, version: str, arch: str) -> Iterator[str]:
             yield f"{stem}-{filename_arch}.AppImage"
 
 
+def asset_variant(name: str, version: str, *, keep_timestamp: bool = False) -> str:
+    # Keep distribution/edition text; only the release version and build date may change.
+    pattern = name.replace(version, "{version}")
+    if not keep_timestamp:
+        pattern = re.sub(r"(?<=[_.-])\d{8}(?:\d{6})?(?=[_.-]|$)", "{timestamp}", pattern)
+    return pattern
+
+
+def variant_label(pattern: str) -> str:
+    label = re.sub(r"[_.-]*v?\{version\}|[_.-]*\{timestamp\}|\.appimage$", "", pattern, flags=re.I)
+    return re.sub(r"ubuntu(?=\d)", "Ubuntu ", label, flags=re.I).replace("_", " ").strip("- .")
+
+
+def build_cache_suffix(app: App) -> str:
+    return (
+        "-build-" + hashlib.sha256(app.build_variant.encode()).hexdigest()[:16]
+        if app.build_variant
+        else ""
+    )
+
+
+class BuildChoiceRequired(ValueError):
+    def __init__(
+        self,
+        app: App,
+        assets: list[dict[str, Any]],
+        version: str,
+        arch: str,
+        *,
+        missing: bool = False,
+    ) -> None:
+        self.app_id = app.id
+        self.missing = missing
+        patterns = [asset_variant(asset["name"], version) for asset in assets]
+        counts = Counter(pattern.casefold() for pattern in patterns)
+        self.choices = tuple(
+            (
+                asset_variant(
+                    asset["name"], version, keep_timestamp=counts[pattern.casefold()] > 1
+                ),
+                asset["name"],
+            )
+            for asset, pattern in zip(assets, patterns, strict=True)
+        )
+        names = ", ".join(asset["name"] for asset in assets[:5])
+        super().__init__(
+            "The saved build is unavailable. Choose a build again: " + names
+            if missing
+            else f"Multiple AppImages match {arch}; cannot choose safely: {names}"
+        )
+
+
 def select_asset(app: App, assets: list[Any], version: str, arch: str) -> dict[str, Any]:
     labelled = []
     unlabelled = []
@@ -212,14 +274,35 @@ def select_asset(app: App, assets: list[Any], version: str, arch: str) -> dict[s
     candidates = labelled or unlabelled
     if not candidates:
         raise ValueError(f"No supported {arch} AppImage filename was found in this release.")
+    if app.build_variant:
+        variants = [
+            {
+                asset_variant(asset["name"], version),
+                asset_variant(asset["name"], version, keep_timestamp=True),
+            }
+            for asset in candidates
+        ]
+        selected = [
+            asset
+            for asset, patterns in zip(candidates, variants, strict=True)
+            if app.build_variant in patterns
+        ]
+        if not selected:
+            selected = [
+                asset
+                for asset, patterns in zip(candidates, variants, strict=True)
+                if app.build_variant.casefold() in {pattern.casefold() for pattern in patterns}
+            ]
+        if len(selected) == 1:
+            return selected[0]
+        raise BuildChoiceRequired(app, candidates, version, arch, missing=not selected)
     for expected in preferred_asset_names(app, version, arch):
         preferred = [a for a in candidates if a["name"].casefold() == expected.casefold()]
         if preferred:
             candidates = preferred
             break
     if len(candidates) != 1:
-        names = ", ".join(a["name"] for a in candidates[:5])
-        raise ValueError(f"Multiple AppImages match {arch}; cannot choose safely: {names}")
+        raise BuildChoiceRequired(app, candidates, version, arch)
     return candidates[0]
 
 
@@ -564,7 +647,7 @@ def release_from_cache(app: App, item: Any) -> Release:
 
 def release_cache_path(app: App, cache_dir: Path) -> Path:
     suffix = "-prereleases" if app.include_prereleases else ""
-    return cache_dir / f"{app.id}-{architecture()}{suffix}.json"
+    return cache_dir / f"{app.id}-{architecture()}{suffix}{build_cache_suffix(app)}.json"
 
 
 def restore_rate_limits(cache_dir: Path) -> None:

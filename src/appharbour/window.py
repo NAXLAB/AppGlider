@@ -62,11 +62,14 @@ from appharbour.jobs import Task, TaskResult
 from appharbour.library import Installed, Library
 from appharbour.release_info import ReleaseInfo, cached_info, discover_releases, remember_release
 from appharbour.releases import (
+    BuildChoiceRequired,
     Progress,
     Release,
     cached_release,
     check_cancel,
     latest_release,
+    variant_label,
+    version_key,
 )
 from appharbour.repositories_dialog import RepositoriesDialog
 from appharbour.version_label import VersionLabel
@@ -90,11 +93,13 @@ class AppCard(QFrame):
     rollback_requested = Signal(str)
     remove_requested = Signal(str)
     preferences_requested = Signal(str)
+    build_requested = Signal(str)
 
     def __init__(self, app: App, icon_path: Path | None = None) -> None:
         super().__init__()
         self.app = app
         self.installed: Installed | None = None
+        self.build_required = False
         self.setObjectName("appCard")
         self.setMinimumWidth(CARD_MIN_WIDTH)
         self.setMinimumHeight(200)
@@ -124,7 +129,7 @@ class AppCard(QFrame):
         self.update_button = QPushButton("Update")
         self.update_button.setObjectName("cardAction")
         self.update_button.setAccessibleName(f"Update {app.name}")
-        self.update_button.clicked.connect(lambda: self.install_requested.emit(app.id))
+        self.update_button.clicked.connect(self.request_update)
         self.update_button.hide()
         more = QToolButton()
         more.setText("⋯")
@@ -139,7 +144,7 @@ class AppCard(QFrame):
         menu.addAction("Open repository").triggered.connect(
             lambda: QDesktopServices.openUrl(QUrl(app.source_url))
         )
-        self.preferences_action = menu.addAction("Release preferences…")
+        self.preferences_action = menu.addAction("Application preferences…")
         self.preferences_action.triggered.connect(lambda: self.preferences_requested.emit(app.id))
         menu.addSeparator()
         self.shortcut_action = menu.addAction("Create/repair menu shortcut")
@@ -183,6 +188,12 @@ class AppCard(QFrame):
         else:
             self.install_requested.emit(self.app.id)
 
+    def request_update(self) -> None:
+        if self.build_required:
+            self.build_requested.emit(self.app.id)
+        else:
+            self.install_requested.emit(self.app.id)
+
     def set_state(
         self,
         installed: Installed | None,
@@ -198,6 +209,8 @@ class AppCard(QFrame):
         if action_row.indexOf(self.action_button) < 0:
             action_row.addWidget(self.action_button)
         newer = bool(installed and release and release.newer_than(installed.version))
+        choice = info.choice(self.app.include_prereleases) if info else None
+        self.build_required = bool(choice and choice.build_required)
         self.action_button.setText("Launch" if installed else "Install")
         self.action_button.setAccessibleName(
             f"{'Launch' if installed else 'Install'} {self.app.name}"
@@ -214,7 +227,8 @@ class AppCard(QFrame):
         )
         self.remove_action.setEnabled(bool(not busy and installed and installed.managed))
         self.shortcut_action.setEnabled(bool(not busy and installed and installed.managed))
-        self.update_button.setVisible(newer)
+        self.update_button.setText("Choose build" if self.build_required else "Update")
+        self.update_button.setVisible(bool(installed and self.build_required) or newer)
         self.update_button.setEnabled(not busy)
         self.preferences_action.setEnabled(not busy)
         waiting = bool(
@@ -225,7 +239,7 @@ class AppCard(QFrame):
             and not newer
             and (release is None or release.version != installed.version)
         )
-        self.available_version.setVisible(bool(newer or not installed))
+        self.available_version.setVisible(bool(newer or not installed or self.build_required))
         if not installed:
             self.available_version.set_version("Available")
         elif release:
@@ -269,6 +283,8 @@ class AppCard(QFrame):
             checked = "Refreshing releases…"
         elif refresh_error:
             checked = f"Refresh failed · checked {stamp}" if stamp else "Release check failed"
+        elif self.build_required:
+            checked = "Choose a build before updating"
         elif waiting:
             checked = "Waiting for a newer stable release"
         elif info:
@@ -359,6 +375,11 @@ class DetailsDialog(QDialog):
         repo.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         info.addRow("Repository", repo)
         info.addRow("Format", QLabel("Linux AppImage"))
+        if app.build_variant:
+            build = QLabel(variant_label(app.build_variant))
+            build.setTextFormat(Qt.TextFormat.PlainText)
+            build.setWordWrap(True)
+            info.addRow("Selected build", build)
         self.installed_label = VersionLabel()
         info.addRow("Installed version", self.installed_label)
         self.available_label = VersionLabel()
@@ -381,6 +402,10 @@ class DetailsDialog(QDialog):
             location.setWordWrap(True)
             location.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
             info.addRow("Location", location)
+            filename = QLabel(installed.path.name)
+            filename.setTextFormat(Qt.TextFormat.PlainText)
+            filename.setWordWrap(True)
+            info.addRow("Installed file", filename)
         layout.addLayout(info)
         self.note = QLabel()
         self.note.setObjectName("muted")
@@ -412,6 +437,7 @@ class DetailsDialog(QDialog):
             bool(release and release.prerelease),
             bool(release and release.is_latest),
         )
+        self.available_label.setToolTip(release.name if release else "")
         for label, option in (
             (self.stable_label, info.stable if info else None),
             (self.preview_label, info.preview if info else None),
@@ -608,6 +634,7 @@ class LauncherWindow(QMainWindow):
         self.release_task: Task | None = None
         self.release_queue: list[str] = []
         self.release_checking: str | None = None
+        self.release_build_variant = ""
         self.release_force = False
         self.background_enabled = False
         self.close_after_release = False
@@ -738,6 +765,7 @@ class LauncherWindow(QMainWindow):
         card.rollback_requested.connect(self.rollback_app)
         card.remove_requested.connect(self.remove_app)
         card.preferences_requested.connect(lambda app_id: self.open_repositories(app_id=app_id))
+        card.build_requested.connect(self.choose_build)
         return card
 
     def show_launcher(self) -> None:
@@ -811,7 +839,10 @@ class LauncherWindow(QMainWindow):
         self.check_button.setText("Refreshing…" if self.release_task else "Refresh releases")
         self.check_button.setEnabled(self.release_task is None and bool(self.installed))
         self.update_all_button.setVisible(
-            any(item.managed and self.has_update(app_id) for app_id, item in self.installed.items())
+            any(
+                item.managed and app_id in self.releases and self.has_update(app_id)
+                for app_id, item in self.installed.items()
+            )
         )
         self.update_all_button.setEnabled(self.task is None)
         self.grid.set_cards(
@@ -888,7 +919,12 @@ class LauncherWindow(QMainWindow):
             self.apply_theme()
             self.scan_installed()
 
-    def open_repositories(self, adding: bool = False, app_id: str | None = None) -> None:
+    def choose_build(self, app_id: str) -> None:
+        self.open_repositories(app_id=app_id, choose_build=True)
+
+    def open_repositories(
+        self, adding: bool = False, app_id: str | None = None, *, choose_build: bool = False
+    ) -> None:
         if self.task is not None:
             return
         try:
@@ -904,11 +940,23 @@ class LauncherWindow(QMainWindow):
                 if dialog.repo_list.item(row).data(Qt.ItemDataRole.UserRole) == app_id:
                     dialog.repo_list.setCurrentRow(row)
                     break
+            if choose_build:
+                dialog.choose_build()
         dialog.exec()
 
     def has_update(self, app_id: str) -> bool:
         installed, release = self.installed.get(app_id), self.releases.get(app_id)
-        return bool(installed and release and release.newer_than(installed.version))
+        if installed and release:
+            return release.newer_than(installed.version)
+        info = self.release_infos.get(app_id)
+        app = next((app for app in self.apps if app.id == app_id), None)
+        choice = info.choice(app.include_prereleases) if info and app else None
+        return bool(
+            installed
+            and choice
+            and choice.build_required
+            and version_key(choice.version) > version_key(installed.version)
+        )
 
     def scan_installed(self) -> None:
         try:
@@ -928,6 +976,15 @@ class LauncherWindow(QMainWindow):
                     if app.id not in self.cards or self.cards[app.id].app != app:
                         old = self.cards.pop(app.id, None)
                         if old is not None:
+                            if old.app.build_variant != app.build_variant:
+                                self.release_infos.pop(app.id, None)
+                                self.release_errors.pop(app.id, None)
+                                if (
+                                    self.release_task is not None
+                                    and app.id == self.release_checking
+                                    and app.id not in self.release_queue
+                                ):
+                                    self.release_queue.append(app.id)
                             old.deleteLater()
                         self.releases.pop(app.id, None)
                         self.check_errors.pop(app.id, None)
@@ -1018,7 +1075,7 @@ class LauncherWindow(QMainWindow):
         self.releases.update(result.releases)
         for app in self.apps:
             checked_info = result.release_infos.get(app.id)
-            if checked_info is not None:
+            if checked_info is not None and checked_info.build_variant == app.build_variant:
                 self.release_infos[app.id] = checked_info
                 self.release_errors.pop(app.id, None)
                 self.apply_release_info(app)
@@ -1032,6 +1089,8 @@ class LauncherWindow(QMainWindow):
             self.check_errors.pop(app_id, None)
         self.reset_task()
         self.footer.setText(result.message)
+        if result.build_choices and not self.close_after_task:
+            self.choose_build(next(iter(result.build_choices)))
         if result.errors and not self.close_after_task:
             errors = "\n\n".join(f"{key}: {value}" for key, value in result.errors.items())
             QMessageBox.warning(self, "Some operations could not finish", errors)
@@ -1130,6 +1189,7 @@ class LauncherWindow(QMainWindow):
             return TaskResult("Release checked.", release_infos={app.id: info})
 
         self.release_checking = app.id
+        self.release_build_variant = app.build_variant
         self.release_task = Task(operation)
         self.release_task.signals.finished.connect(self.release_check_finished)
         self.release_task.signals.failed.connect(self.release_check_failed)
@@ -1143,14 +1203,19 @@ class LauncherWindow(QMainWindow):
         for app in self.apps:
             info = result.release_infos.get(app.id)
             if info is not None:
+                if info.build_variant != app.build_variant:
+                    if app.id in self.installed and app.id not in self.release_queue:
+                        self.release_queue.append(app.id)
+                    continue
                 self.release_infos[app.id] = info
                 self.release_errors.pop(app.id, None)
                 self.apply_release_info(app)
         self.next_release_check()
 
     def release_check_failed(self, error: str) -> None:
-        if self.release_checking is not None:
-            self.release_errors[self.release_checking] = error
+        app = next((app for app in self.apps if app.id == self.release_checking), None)
+        if app and app.build_variant == self.release_build_variant:
+            self.release_errors[app.id] = error
         self.release_check_finished(TaskResult(error))
 
     def install_app(self, app_id: str) -> None:
@@ -1176,7 +1241,11 @@ class LauncherWindow(QMainWindow):
 
     def update_all(self) -> None:
         apps = [
-            app for app in self.apps if self.has_update(app.id) and self.installed[app.id].managed
+            app
+            for app in self.apps
+            if self.has_update(app.id)
+            and app.id in self.releases
+            and self.installed[app.id].managed
         ]
 
         def operation(cancel: Event, progress: Progress) -> TaskResult:
@@ -1195,6 +1264,8 @@ class LauncherWindow(QMainWindow):
                         ),
                     )
                     result.releases[app.id] = release
+                except BuildChoiceRequired as error:
+                    result.build_choices[app.id] = error
                 except (OSError, ValueError) as error:
                     result.errors[app.id] = str(error)
             result.message = f"Updated {len(result.releases)} apps."

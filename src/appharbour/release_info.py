@@ -20,6 +20,7 @@ class ReleaseOption:
     version: str
     release: Release | None
     error: str = ""
+    build_required: bool = False
 
 
 @dataclass(frozen=True)
@@ -28,6 +29,7 @@ class ReleaseInfo:
     preview: ReleaseOption | None
     checked_at: float
     newer_stable: ReleaseOption | None = None
+    build_variant: str = ""
 
     def choice(self, include_previews: bool) -> ReleaseOption | None:
         choices = (
@@ -50,7 +52,10 @@ class ReleaseInfo:
 
 
 def info_path(app: App, cache_dir: Path) -> Path:
-    return cache_dir / f"{app.id}-{releases.architecture()}-catalog.json"
+    return (
+        cache_dir
+        / f"{app.id}-{releases.architecture()}{releases.build_cache_suffix(app)}-catalog.json"
+    )
 
 
 def cached_info(app: App, cache_dir: Path) -> ReleaseInfo | None:
@@ -59,6 +64,8 @@ def cached_info(app: App, cache_dir: Path) -> ReleaseInfo | None:
         if path.stat().st_size > releases.MAX_METADATA:
             return None
         data = json.loads(path.read_text())
+        if not isinstance(data, dict) or data.get("build_variant", "") != app.build_variant:
+            return None
         checked_at = data["checked_at"]
         if type(checked_at) not in (int, float) or not 0 < checked_at <= time.time() + 300:
             return None
@@ -69,12 +76,14 @@ def cached_info(app: App, cache_dir: Path) -> ReleaseInfo | None:
                 options.append(None)
                 continue
             version, error = item["version"], item["error"]
+            build_required = item.get("build_required", False)
             if (
                 not isinstance(version, str)
                 or len(version) > 128
                 or not re.fullmatch(releases.VERSION, version)
                 or not isinstance(error, str)
                 or len(error) > 4096
+                or type(build_required) is not bool
             ):
                 return None
             release = (
@@ -86,10 +95,12 @@ def cached_info(app: App, cache_dir: Path) -> ReleaseInfo | None:
                 return None
             if release and (release.version != version or release.prerelease != prerelease):
                 return None
-            options.append(ReleaseOption(version, release, error))
+            if release and build_required:
+                return None
+            options.append(ReleaseOption(version, release, error, build_required))
         if not any(options):
             return None
-        return ReleaseInfo(options[0], options[1], checked_at, options[2])
+        return ReleaseInfo(options[0], options[1], checked_at, options[2], app.build_variant)
     except (OSError, ValueError, KeyError, TypeError):
         return None
 
@@ -151,13 +162,15 @@ def inspect_entries(
                 release = releases.with_checksum(app, data["tag_name"], release, cancel)
         except releases.RateLimited:
             raise
+        except releases.BuildChoiceRequired as error:
+            options.append(ReleaseOption(version, None, str(error)[:4096], True))
         except ValueError as error:
             options.append(ReleaseOption(version, None, str(error)[:4096]))
         else:
             options.append(ReleaseOption(version, release))
     if not any(options):
         raise ValueError("No published release with a supported version was found.")
-    return ReleaseInfo(options[0], options[1], time.time(), options[2])
+    return ReleaseInfo(options[0], options[1], time.time(), options[2], app.build_variant)
 
 
 def discover_releases(

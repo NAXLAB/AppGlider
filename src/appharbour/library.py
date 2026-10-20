@@ -14,7 +14,15 @@ from pathlib import Path
 from threading import Event
 
 from appharbour import APP_ICON
-from appharbour.catalog import APPS, App, custom_app, load_apps, load_release_preferences
+from appharbour.catalog import (
+    APPS,
+    App,
+    custom_app,
+    load_apps,
+    load_build_preferences,
+    load_release_preferences,
+    valid_build_variant,
+)
 from appharbour.icons import MAX_ICON_BYTES, normalise_icon
 from appharbour.releases import (
     VERSION,
@@ -100,8 +108,28 @@ class Library:
     @property
     def apps(self) -> tuple[App, ...]:
         return load_apps(
-            self.data_dir / "repositories.json", self.data_dir / "release-preferences.json"
+            self.data_dir / "repositories.json",
+            self.data_dir / "release-preferences.json",
+            self.data_dir / "build-preferences.json",
         )
+
+    def _save_build_variant(self, app_id: str, variant: str) -> None:
+        if not valid_build_variant(variant):
+            raise ValueError("Invalid AppImage build preference.")
+        path = self.data_dir / "build-preferences.json"
+        preferences = load_build_preferences(path)
+        if variant:
+            preferences[app_id] = variant
+        else:
+            preferences.pop(app_id, None)
+        if preferences or path.exists():
+            atomic_json(path, preferences)
+
+    def set_build_variant(self, app_id: str, variant: str) -> None:
+        with self._lock():
+            if app_id not in {app.id for app in self.apps}:
+                raise ValueError("This application is not in the catalog.")
+            self._save_build_variant(app_id, variant)
 
     def _save_release_preference(self, app_id: str, include: bool) -> None:
         if type(include) is not bool:
@@ -144,7 +172,7 @@ class Library:
             atomic_bytes(directory / f"{app.id}.png", png)
 
     def add_repository(self, app: App) -> None:
-        if app != custom_app(app.repo, app.name, app.include_prereleases):
+        if app != custom_app(app.repo, app.name, app.include_prereleases, app.build_variant):
             raise ValueError("Invalid custom repository details.")
         with self._lock():
             apps = self.apps
@@ -152,6 +180,7 @@ class Library:
                 raise ValueError("This repository is already in the catalog.")
             self.records()
             self._save_release_preference(app.id, app.include_prereleases)
+            self._save_build_variant(app.id, app.build_variant)
             self._save_repositories((*apps[len(APPS) :], app))
 
     def remove_repository(self, app_id: str) -> None:
@@ -167,6 +196,8 @@ class Library:
             # An orphan preference is harmless: adding this repository resets it.
             with contextlib.suppress(OSError):
                 self._save_release_preference(app_id, False)
+            with contextlib.suppress(OSError):
+                self._save_build_variant(app_id, "")
             with contextlib.suppress(OSError):
                 icon = self.data_dir / "icons" / f"{app_id}.png"
                 if not icon.parent.is_symlink():

@@ -20,6 +20,7 @@ Versions shown are illustrative.
 - Verify downloads against published SHA-256 checksums before installation.
 - Add supported GitHub repositories directly from the library.
 - Choose stable releases or include previews from each card’s menu, and inspect releases in app details.
+- Choose between AppImage build variants when needed, with the choice remembered for updates.
 - Discover their application icons or choose a local PNG/SVG, with offline icon storage.
 - Create application-menu shortcuts and access the launcher from the system tray.
 
@@ -30,11 +31,11 @@ left alone. **Installed (N)** and **Updates (N)** show library totals, even whil
 
 The AppHarbour AppImage includes Python and Qt. Use a release AppImage, or follow the
 [build instructions](docs/development.md#build-the-appimage) to create one locally.
-For version 0.2.1:
+For version 0.2.2:
 
 ```sh
-chmod +x AppHarbour-0.2.1-linux-x86_64.AppImage
-./AppHarbour-0.2.1-linux-x86_64.AppImage
+chmod +x AppHarbour-0.2.2-linux-x86_64.AppImage
+./AppHarbour-0.2.2-linux-x86_64.AppImage
 ```
 
 Keep the file in a permanent location: AppHarbour creates a menu shortcut pointing to it.
@@ -57,6 +58,10 @@ Repositories need a supported release and an AppImage with a published checksum.
 Stable releases are the default; prerelease-only projects require explicit opt-in.
 AppImage filenames can use different branding and layouts; downloads are matched to your CPU.
 See the [usage guide](docs/usage.md) for supported names, updates and desktop integration.
+
+## Roadmap
+
+See the [roadmap](docs/roadmap.md) for planned features and designs under discussion.
 
 ## Development
 

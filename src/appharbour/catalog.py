@@ -19,6 +19,7 @@ class App:
     repo: str
     asset_stem: str = ""
     include_prereleases: bool = False
+    build_variant: str = ""
 
     @property
     def icon(self) -> Path:
@@ -52,9 +53,16 @@ APPS = (
 )
 
 
-def custom_app(repository: str, name: str | None = None, include_prereleases: bool = False) -> App:
+def custom_app(
+    repository: str,
+    name: str | None = None,
+    include_prereleases: bool = False,
+    build_variant: str = "",
+) -> App:
     if type(include_prereleases) is not bool:
         raise ValueError("The release preference must be true or false.")
+    if not valid_build_variant(build_variant):
+        raise ValueError("Invalid AppImage build preference.")
     value = repository.strip()
     if any(ord(c) < 32 or ord(c) == 127 for c in value):
         raise ValueError("The repository address contains control characters.")
@@ -86,7 +94,36 @@ def custom_app(repository: str, name: str | None = None, include_prereleases: bo
         f"{owner}/{slug}",
         slug,
         include_prereleases,
+        build_variant,
     )
+
+
+def valid_build_variant(value: object) -> bool:
+    return isinstance(value, str) and (
+        not value
+        or (
+            len(value) <= 768
+            and value.casefold().endswith(".appimage")
+            and not any(ord(c) < 32 or ord(c) == 127 or c in "/\\" for c in value)
+        )
+    )
+
+
+def load_build_preferences(path: Path) -> dict[str, str]:
+    if not path.exists():
+        return {}
+    try:
+        if path.stat().st_size > 1024 * 1024:
+            raise ValueError("The build preferences file is too large.")
+        data = json.loads(path.read_text())
+        if not isinstance(data, dict) or any(
+            not isinstance(key, str) or len(key) > 256 or not valid_build_variant(value)
+            for key, value in data.items()
+        ):
+            raise ValueError("Invalid build preferences.")
+        return data
+    except (OSError, ValueError) as error:
+        raise ValueError(f"Cannot read {path}. The file was preserved: {error}") from error
 
 
 def load_release_preferences(path: Path) -> dict[str, bool]:
@@ -106,10 +143,20 @@ def load_release_preferences(path: Path) -> dict[str, bool]:
         raise ValueError(f"Cannot read {path}. The file was preserved: {error}") from error
 
 
-def load_apps(path: Path, preferences_path: Path | None = None) -> tuple[App, ...]:
+def load_apps(
+    path: Path, preferences_path: Path | None = None, builds_path: Path | None = None
+) -> tuple[App, ...]:
     apps = _load_apps(path)
     preferences = load_release_preferences(preferences_path) if preferences_path else {}
-    return tuple(replace(app, include_prereleases=preferences.get(app.id, False)) for app in apps)
+    builds = load_build_preferences(builds_path) if builds_path else {}
+    return tuple(
+        replace(
+            app,
+            include_prereleases=preferences.get(app.id, False),
+            build_variant=builds.get(app.id, ""),
+        )
+        for app in apps
+    )
 
 
 def _load_apps(path: Path) -> tuple[App, ...]:

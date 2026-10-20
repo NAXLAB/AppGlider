@@ -1,0 +1,32 @@
+# Roadmap
+
+Planned improvements for AppHarbour. These items are not implemented and have no
+promised release dates or fixed implementation order. Designs may change after discussion.
+
+## Planned
+
+- **Import/export profiles:** back up or share repository definitions, display names,
+  release preferences, build choices and saved icons. The proposed `.appharbour` format
+  is a ZIP containing a versioned JSON manifest and PNG icons. Preview imports and merge
+  with the existing library; AppImages, documents and machine-specific paths stay outside
+  the profile.
+- **GitHub request status:** show request limits, retry times and when cached release
+  information is being used.
+- **Installation queue:** queue multiple installs or updates with clear progress and
+  cancellation controls.
+- **AppHarbour updates:** check for launcher updates, show release notes and offer an
+  explicit update action.
+- **Storage overview:** show space used by managed applications and their retained
+  rollback versions, with controls for removing an unwanted rollback copy.
+
+## Library customisation — design discussion
+
+Explore hiding unwanted applications and letting users arrange cards in their preferred
+order. The interaction needs further discussion before implementation, including:
+
+- Whether cards should move by drag-and-drop, an explicit arrangement mode, or move controls.
+- How a saved custom order interacts with searching and the All apps, Installed and Updates views.
+- How hidden applications are restored and how installed apps with updates remain discoverable.
+- Keyboard access and preserving the layout across restarts and different window sizes.
+
+Hiding a card should preserve its repository definition and any installed AppImage.

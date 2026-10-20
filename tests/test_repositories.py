@@ -19,13 +19,15 @@ from PySide6.QtCore import QSettings, Qt, QTimer
 from PySide6.QtGui import QPalette
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QMessageBox
+from test_builds import BAMBU, bambu_metadata, chosen_bambu
 from test_library import appimage_bytes
 
-from appharbour import APP_ICON
+from appharbour import APP_ICON, releases
 from appharbour.catalog import APPS, custom_app, load_apps
 from appharbour.icons import IconCandidate, normalise_icon
+from appharbour.jobs import TaskResult
 from appharbour.library import Library
-from appharbour.release_info import ReleaseInfo, ReleaseOption
+from appharbour.release_info import ReleaseInfo, ReleaseOption, discover_releases
 from appharbour.releases import Release, architecture, check_cancel, select_release
 from appharbour.repositories_dialog import RepositoriesDialog
 from appharbour.window import LauncherWindow, SettingsDialog
@@ -462,6 +464,275 @@ class RepositoryGuiTests(unittest.TestCase):
                 self.wait_for_task(self.dialog)
                 self.assertIn(message, self.dialog.status.text())
                 self.assertEqual(cached.read_bytes(), saved)
+
+    def test_add_multi_build_repo_remembers_choice_and_keeps_preview_preference_independent(self):
+        entries = [bambu_metadata(), bambu_metadata("02.09.00.12", preview=True)]
+        with (
+            patch.object(releases, "api_entries", return_value=entries),
+            patch("appharbour.repositories_dialog.discover_icons", return_value=()),
+            patch("appharbour.library.download") as download,
+        ):
+            self.dialog.start_add_repository()
+            self.dialog.url.setText(BAMBU.source_url)
+            self.dialog.name.setText(BAMBU.name)
+            self.dialog.inspect_repository()
+            self.wait_for_task(self.dialog)
+            self.assertTrue(self.dialog.build_group.isVisibleTo(self.dialog))
+            self.assertEqual(self.dialog.build_combo.count(), 3)
+            self.assertFalse(self.dialog.add_button.isEnabled())
+            self.assertIn("Ubuntu 24.04", self.dialog.build_combo.itemText(2))
+            self.dialog.build_combo.setCurrentIndex(2)
+            self.wait_for_task(self.dialog)
+            self.assertTrue(self.dialog.add_button.isEnabled())
+            self.assertIn("ubuntu24.04", self.dialog.filename.text())
+            self.dialog.add_repository()
+            saved = next(app for app in self.library.apps if app.id == BAMBU.id)
+            self.assertEqual(saved.build_variant, chosen_bambu().build_variant)
+            self.assertEqual(self.dialog.build_combo.currentData(), saved.build_variant)
+            self.assertEqual(self.window.cards[saved.id].action_button.text(), "Install")
+            self.dialog.release_channel.setCurrentIndex(1)
+            self.dialog.inspect_repository()
+            self.wait_for_task(self.dialog)
+            self.assertTrue(self.dialog.release.prerelease)
+            self.assertIn("ubuntu24.04", self.dialog.release.name)
+            self.assertEqual(self.dialog.version_label.badge.text(), "Pre-release")
+            self.dialog.choose_build()
+            self.wait_for_task(self.dialog)
+            self.dialog.build_combo.setCurrentIndex(1)
+            self.wait_for_task(self.dialog)
+            changed = next(app for app in self.library.apps if app.id == BAMBU.id)
+            self.assertTrue(changed.include_prereleases)
+            self.assertIn("ubuntu22.04", changed.build_variant)
+            download.assert_not_called()
+        self.assertEqual(self.library.scan(), {})
+
+    def test_failed_build_preference_save_keeps_the_old_choice_and_repository(self):
+        selected = chosen_bambu()
+        self.library.add_repository(selected)
+        self.dialog.refresh_list()
+        for row in range(self.dialog.repo_list.count()):
+            if self.dialog.repo_list.item(row).data(Qt.ItemDataRole.UserRole) == selected.id:
+                self.dialog.repo_list.setCurrentRow(row)
+                break
+        with patch.object(releases, "api_entries", return_value=[bambu_metadata()]):
+            self.dialog.choose_build()
+            self.wait_for_task(self.dialog)
+            with patch.object(self.library, "set_build_variant", side_effect=OSError("disk full")):
+                self.dialog.build_combo.setCurrentIndex(1)
+                self.wait_for_task(self.dialog)
+        self.assertIn("could not be saved", self.dialog.status.text())
+        self.assertEqual(next(app for app in self.library.apps if app.id == selected.id), selected)
+        self.assertIsNone(self.dialog.release)
+        self.assertIn(self.dialog.build_combo.currentData(), ("", selected.build_variant))
+
+    def test_switching_channel_and_build_retains_repository_icons_and_selection(self):
+        first = normalise_icon(APP_ICON.read_bytes())
+        selected = normalise_icon(
+            b'<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32">'
+            b'<path d="M0 0H32V32H0Z" fill="blue"/></svg>'
+        )
+        icons = (IconCandidate("icon.png", first), IconCandidate("blue.svg", selected))
+        preview = bambu_metadata("02.08.04.57", preview=True)
+        for asset in preview["assets"]:
+            for key in ("name", "browser_download_url"):
+                asset[key] = (
+                    asset[key].replace("ubuntu24.04", "ubu24").replace("ubuntu22.04", "ubu22")
+                )
+        with (
+            patch.object(releases, "api_entries", return_value=[bambu_metadata(), preview]),
+            patch(
+                "appharbour.repositories_dialog.discover_icons",
+                side_effect=[icons, releases.RateLimited("api.github.com", 1)],
+            ) as discover,
+        ):
+            self.dialog.start_add_repository()
+            self.dialog.url.setText(BAMBU.source_url)
+            self.dialog.name.setText(BAMBU.name)
+            self.dialog.inspect_repository()
+            self.wait_for_task(self.dialog)
+            self.dialog.build_combo.setCurrentIndex(2)
+            self.wait_for_task(self.dialog)
+            self.dialog.icon_choices.setCurrentIndex(1)
+            self.assertEqual(self.dialog.selected_icon, selected)
+            self.dialog.release_channel.setCurrentIndex(1)
+            self.assertEqual(self.dialog.selected_icon, selected)
+            self.dialog.inspect_repository()
+            self.wait_for_task(self.dialog)
+            self.dialog.build_combo.setCurrentIndex(2)
+            self.wait_for_task(self.dialog)
+            self.assertEqual(self.dialog.icon_options, icons)
+            self.assertEqual(self.dialog.selected_icon, selected)
+            self.assertEqual(self.dialog.icon_choices.currentIndex(), 1)
+            self.assertNotIn("default icon", self.dialog.status.text())
+            discover.assert_called_once()
+            self.dialog.add_repository()
+        saved = next(app for app in self.library.apps if app.id == BAMBU.id)
+        self.assertTrue(saved.include_prereleases)
+        self.assertEqual(self.library.icon_path(saved).read_bytes(), selected)
+
+    def test_channel_changes_keep_explicit_default_and_local_icon_until_repository_changes(self):
+        png = normalise_icon(APP_ICON.read_bytes())
+        choices = (IconCandidate("repository.png", png),)
+        with patch(
+            "appharbour.repositories_dialog.discover_icons", return_value=choices
+        ) as discover:
+            self.inspect()
+            self.dialog.icon_choices.setCurrentIndex(1)
+            self.assertIsNone(self.dialog.selected_icon)
+            self.dialog.release_channel.setCurrentIndex(1)
+            with patch(
+                "appharbour.repositories_dialog.latest_release", return_value=custom_release()
+            ):
+                self.dialog.inspect_repository()
+                self.wait_for_task(self.dialog)
+            self.assertIsNone(self.dialog.selected_icon)
+            self.assertEqual(self.dialog.icon_choices.currentIndex(), 1)
+            image = self.root / "local.png"
+            image.write_bytes(png)
+            with patch(
+                "appharbour.repositories_dialog.QFileDialog.getOpenFileName",
+                return_value=(str(image), ""),
+            ):
+                self.dialog.choose_icon()
+            self.dialog.release_channel.setCurrentIndex(0)
+            with patch(
+                "appharbour.repositories_dialog.latest_release", return_value=custom_release()
+            ):
+                self.dialog.inspect_repository()
+                self.wait_for_task(self.dialog)
+            self.assertEqual(self.dialog.selected_icon, png)
+            self.assertEqual(self.dialog.icon_options[0].name, "local.png")
+            discover.assert_called_once()
+        self.dialog.url.setText("https://github.com/another/application")
+        self.assertEqual(self.dialog.icon_options, ())
+        self.assertIsNone(self.dialog.selected_icon)
+
+    def test_failed_icon_lookup_explains_fallback_and_can_be_retried(self):
+        icon = IconCandidate("application.png", normalise_icon(APP_ICON.read_bytes()))
+        with patch(
+            "appharbour.repositories_dialog.discover_icons",
+            side_effect=[ValueError("request limit reached"), (icon,)],
+        ) as discover:
+            self.inspect()
+            self.assertTrue(self.dialog.add_button.isEnabled())
+            self.assertIn("default icon", self.dialog.status.text())
+            self.assertIn("request limit reached", self.dialog.status.text())
+            with patch(
+                "appharbour.repositories_dialog.latest_release", return_value=custom_release()
+            ):
+                self.dialog.inspect_repository()
+                self.wait_for_task(self.dialog)
+            self.assertEqual(discover.call_count, 2)
+            self.assertEqual(self.dialog.selected_icon, icon.png)
+            self.assertEqual(self.dialog.status.text(), "Ready to add.")
+
+    def test_install_discovers_ambiguity_and_opens_build_preferences_without_downloading(self):
+        self.library.add_repository(BAMBU)
+        self.window.scan_installed()
+        with (
+            patch.object(releases, "api_entries", return_value=[bambu_metadata()]),
+            patch.object(self.window, "choose_build") as choose,
+            patch("appharbour.library.download") as download,
+        ):
+            self.window.install_app(BAMBU.id)
+            self.wait_for_task(self.window)
+            choose.assert_called_once_with(BAMBU.id)
+            download.assert_not_called()
+        self.assertEqual(self.library.scan(), {})
+
+    def test_changing_build_while_background_check_runs_discards_old_results_and_rechecks(self):
+        selected = chosen_bambu()
+        self.library.add_repository(selected)
+        payload = appimage_bytes()
+        with patch.object(releases, "request", return_value=io.BytesIO(payload)):
+            self.library.install(
+                selected,
+                select_release(selected, bambu_metadata(), architecture()),
+                Event(),
+                lambda *args: None,
+            )
+        with patch.object(releases, "api_entries", return_value=[bambu_metadata()]):
+            old_info = discover_releases(selected, Event(), self.library.data_dir / "release-cache")
+        for failed in (False, True):
+            self.library.set_build_variant(selected.id, selected.build_variant)
+            self.window.scan_installed()
+            with (
+                self.subTest(failed=failed),
+                patch("appharbour.window.QThreadPool.globalInstance") as pool,
+            ):
+                self.window.queue_release_checks([selected.id])
+                self.library.set_build_variant(selected.id, chosen_bambu(index=0).build_variant)
+                self.window.catalog_changed()
+                if failed:
+                    self.window.release_check_failed("Old build failed")
+                else:
+                    self.window.release_check_finished(
+                        TaskResult("Old build checked", release_infos={selected.id: old_info})
+                    )
+                self.assertEqual(pool.return_value.start.call_count, 2)
+                self.assertEqual(
+                    self.window.release_build_variant, chosen_bambu(index=0).build_variant
+                )
+                self.assertNotIn(selected.id, self.window.release_infos)
+                self.assertNotIn(selected.id, self.window.release_errors)
+                self.window.release_check_finished(TaskResult("Cancelled"))
+
+    def test_missing_variant_card_requires_choice_before_updating_and_keeps_installed_copy(self):
+        selected = chosen_bambu()
+        self.library.add_repository(selected)
+        payload = appimage_bytes()
+        with patch.object(releases, "request", return_value=io.BytesIO(payload)):
+            installed = self.library.install(
+                selected,
+                select_release(selected, bambu_metadata(), architecture()),
+                Event(),
+                lambda *args: None,
+            )
+        self.window.scan_installed()
+        entries = [bambu_metadata("02.09.00.12", variants=("22.04",))]
+        cache = self.library.data_dir / "release-cache"
+        with patch.object(releases, "api_entries", return_value=entries):
+            info = discover_releases(selected, Event(), cache, force=True)
+        self.window.release_check_finished(TaskResult("Checked", release_infos={selected.id: info}))
+        card = self.window.cards[selected.id]
+        self.assertEqual(card.action_button.text(), "Launch")
+        self.assertEqual(card.update_button.text(), "Choose build")
+        self.assertTrue(card.update_button.isVisibleTo(card))
+        self.assertEqual(self.window.tabs.tabText(2), "Updates (1)")
+        self.assertTrue(self.window.update_all_button.isHidden())
+        observed = []
+
+        def choose_available_build():
+            dialog = self.qt.activeModalWidget()
+            if not isinstance(dialog, RepositoriesDialog):
+                return
+            try:
+                self.wait_for_task(dialog)
+                observed.append(dialog.build_combo.count())
+                dialog.build_combo.setCurrentIndex(1)
+                self.wait_for_task(dialog)
+                observed.append(dialog.status.text())
+            finally:
+                dialog.reject()
+
+        with (
+            patch.object(releases, "api_entries", return_value=entries),
+            patch("appharbour.library.download") as download,
+        ):
+            QTimer.singleShot(0, choose_available_build)
+            QTest.mouseClick(card.update_button, Qt.MouseButton.LeftButton)
+            download.assert_not_called()
+        self.assertEqual(observed[0], 2)
+        self.assertIn("Build preference saved", observed[1])
+        self.assertEqual(self.library.scan()[selected.id], installed)
+        self.assertTrue(installed.path.is_file())
+        self.assertEqual(self.window.cards[selected.id].update_button.text(), "Update")
+        with patch.object(releases, "request", return_value=io.BytesIO(payload)):
+            self.window.install_app(selected.id)
+            self.wait_for_task(self.window)
+        updated = self.library.scan()[selected.id]
+        self.assertIn("ubuntu22.04", updated.path.name)
+        self.assertEqual(updated.previous, installed.path)
 
     def test_close_cancels_inspection_and_waits_for_worker(self):
         self.dialog.url.setText(CUSTOM.source_url)
