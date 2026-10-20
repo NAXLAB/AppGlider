@@ -52,6 +52,34 @@ class ReleaseTests(unittest.TestCase):
         cooldown.start()
         self.addCleanup(cooldown.stop)
 
+    def assert_release_paths(self, app, data, release, arch):
+        fallback = replace(
+            release,
+            url=f"{app.source_url}/releases/download/{data['tag_name']}/{release.name}",
+        )
+        with patch.object(releases, "architecture", return_value=arch):
+            self.assertEqual(releases.select_release(app, data, arch), release)
+            with patch.object(releases, "read_metadata", return_value=json.dumps(data).encode()):
+                self.assertEqual(releases.api_release(app, Event()), release)
+            with (
+                patch.object(
+                    releases,
+                    "request",
+                    side_effect=[
+                        Response(f"{app.source_url}/releases/tag/{data['tag_name']}"),
+                        Response(fallback.url, {"Content-Length": str(release.size)}),
+                    ],
+                ) as request,
+                patch.object(releases, "read_metadata", return_value=public_assets(fallback)),
+            ):
+                self.assertEqual(releases.page_release(app, Event()), fallback)
+                request.assert_called_with(fallback.url, method="HEAD")
+            atomic_json(
+                self.cache / f"{app.id}-{arch}.json",
+                {"checked_at": time.time(), "release": asdict(release)},
+            )
+            self.assertEqual(releases.cached_release(app, self.cache), release)
+
     def test_limit_headers_trigger_cooldown_without_repeated_requests(self):
         headers = Message()
         headers["X-RateLimit-Remaining"] = "0"
@@ -141,28 +169,10 @@ class ReleaseTests(unittest.TestCase):
                         }
                     ],
                 }
-                self.assertEqual(releases.select_release(APP, data, arch), release)
+                self.assert_release_paths(APP, data, release, arch)
                 other_arch = "aarch64" if arch == "x86_64" else "x86_64"
                 with self.assertRaisesRegex(ValueError, "AppImage filename"):
                     releases.select_release(APP, data, other_arch)
-                tag_url = f"https://github.com/{APP.repo}/releases/tag/v1.2.3"
-                with (
-                    patch.object(releases, "request") as request,
-                    patch.object(
-                        releases,
-                        "read_metadata",
-                        return_value=public_assets(release),
-                    ),
-                ):
-                    request.side_effect = [
-                        Response(tag_url),
-                        Response(release.url, {"Content-Length": str(release.size)}),
-                    ]
-                    self.assertEqual(releases.page_release(APP, Event()), release)
-                atomic_json(
-                    self.cache_file, {"checked_at": time.time(), "release": asdict(release)}
-                )
-                self.assertEqual(releases.cached_release(APP, self.cache), release)
 
     def test_mixed_case_appimage_names_keep_the_actual_download_name(self):
         app = custom_app("https://github.com/mitcad/Mitcad")
@@ -177,34 +187,10 @@ class ReleaseTests(unittest.TestCase):
             "digest": "sha256:" + release.sha256,
         }
         data = {"tag_name": "v0.13.1", "assets": [None, {"name": None}, asset]}
-        self.assertEqual(releases.select_release(app, data, arch), release)
+        self.assert_release_paths(app, data, release, arch)
         other_arch = "aarch64" if arch == "x86_64" else "x86_64"
         with self.assertRaisesRegex(ValueError, "AppImage filename"):
             releases.select_release(app, data, other_arch)
-        with patch.object(releases, "read_metadata", return_value=json.dumps(data).encode()):
-            self.assertEqual(releases.api_release(app, Event()), release)
-        fallback_url = f"{app.source_url}/releases/download/v0.13.1/{name}"
-        with (
-            patch.object(releases, "request") as request,
-            patch.object(
-                releases,
-                "read_metadata",
-                return_value=public_assets(replace(release, url=fallback_url)),
-            ),
-        ):
-            request.side_effect = [
-                Response("https://github.com/mitcad/Mitcad/releases/tag/v0.13.1"),
-                Response(fallback_url, {"Content-Length": str(release.size)}),
-            ]
-            self.assertEqual(
-                releases.page_release(app, Event()), replace(release, url=fallback_url)
-            )
-            request.assert_called_with(fallback_url, method="HEAD")
-        atomic_json(
-            self.cache / f"{app.id}-{arch}.json",
-            {"checked_at": time.time(), "release": asdict(release)},
-        )
-        self.assertEqual(releases.cached_release(app, self.cache), release)
         asset["browser_download_url"] = url.rsplit("/", 1)[0] + "/" + name.lower()
         with self.assertRaisesRegex(ValueError, "repository"):
             releases.select_release(app, data, arch)
@@ -223,37 +209,13 @@ class ReleaseTests(unittest.TestCase):
                     "digest": "sha256:" + release.sha256,
                 }
                 data = {"tag_name": "v0.2.0", "assets": [asset]}
-                with (
-                    patch.object(releases, "architecture", return_value=arch),
-                    patch.object(releases, "read_metadata", return_value=json.dumps(data).encode()),
-                ):
-                    self.assertEqual(releases.api_release(app, Event()), release)
+                self.assert_release_paths(app, data, release, arch)
                 other_arch = "aarch64" if arch == "x86_64" else "x86_64"
                 with self.assertRaisesRegex(ValueError, "AppImage filename"):
                     releases.select_release(app, data, other_arch)
                 zsync = {**asset, "name": name + ".zsync", "browser_download_url": url + ".zsync"}
                 with self.assertRaisesRegex(ValueError, "AppImage filename"):
                     releases.select_release(app, {**data, "assets": [zsync]}, arch)
-                with (
-                    patch.object(releases, "architecture", return_value=arch),
-                    patch.object(releases, "request") as request,
-                    patch.object(
-                        releases,
-                        "read_metadata",
-                        return_value=public_assets(release),
-                    ),
-                ):
-                    request.side_effect = [
-                        Response(f"{app.source_url}/releases/tag/v0.2.0"),
-                        Response(url, {"Content-Length": str(release.size)}),
-                    ]
-                    self.assertEqual(releases.page_release(app, Event()), release)
-                    request.assert_called_with(url, method="HEAD")
-                    atomic_json(
-                        self.cache / f"{app.id}-{arch}.json",
-                        {"checked_at": time.time(), "release": asdict(release)},
-                    )
-                    self.assertEqual(releases.cached_release(app, self.cache), release)
                 canonical = {
                     **asset,
                     "name": name.replace(alias, arch),

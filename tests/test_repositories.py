@@ -14,7 +14,8 @@ from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QEvent, QSettings, Qt, QTimer
+from gui_helpers import close_window
+from PySide6.QtCore import QSettings, Qt, QTimer
 from PySide6.QtGui import QPalette
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QMessageBox
@@ -211,9 +212,7 @@ class RepositoryGuiTests(unittest.TestCase):
         self.settings.setValue("appearance/theme", "Light")
         self.window = LauncherWindow(self.settings, self.library)
         self.window.show()
-        self.addCleanup(self.qt.sendPostedEvents, None, QEvent.Type.DeferredDelete)
-        self.addCleanup(self.window.deleteLater)
-        self.addCleanup(self.close_window)
+        self.addCleanup(close_window, self.window)
         self.dialog = RepositoriesDialog(self.library, self.window)
         self.dialog.catalog_changed.connect(self.window.scan_installed)
         self.dialog.show()
@@ -226,14 +225,6 @@ class RepositoryGuiTests(unittest.TestCase):
             QTest.qWait(10)
             time.sleep(0.001)  # Let Python worker threads run between Qt waits.
         self.assertIsNone(owner.task, "Background operation did not finish")
-
-    def close_window(self):
-        self.window.quitting = True
-        self.window.close_after_task = True
-        self.window.cancel_task()
-        self.wait_for_task(self.dialog)
-        self.wait_for_task(self.window)
-        self.window.close()
 
     def inspect(self):
         if not self.dialog.adding:
@@ -313,15 +304,6 @@ class RepositoryGuiTests(unittest.TestCase):
                         )
                     finally:
                         combo.hidePopup()
-
-    def test_settings_button_opens_repository_management(self):
-        settings = SettingsDialog(self.settings, self.window)
-        self.addCleanup(settings.close)
-        with patch.object(self.window, "open_repositories") as open_repositories:
-            settings.repositories_requested.connect(self.window.open_repositories)
-            settings.sections.setCurrentRow(1)
-            QTest.mouseClick(settings.repositories_button, Qt.MouseButton.LeftButton)
-            open_repositories.assert_called_once()
 
     def test_repository_screen_opens_through_the_actual_settings_dialog(self):
         observed = []
@@ -464,6 +446,22 @@ class RepositoryGuiTests(unittest.TestCase):
             self.dialog.choose_icon()
         self.assertEqual(cached.read_bytes(), saved)
         self.assertIn("valid PNG or SVG", self.dialog.status.text())
+        for outcome, message in (
+            (ValueError("GitHub request limit reached"), "request limit"),
+            ((), "No icon found"),
+        ):
+            with (
+                self.subTest(outcome=outcome),
+                patch(
+                    "appharbour.repositories_dialog.discover_icons",
+                    side_effect=outcome if isinstance(outcome, Exception) else None,
+                    return_value=outcome,
+                ),
+            ):
+                self.dialog.find_existing_icons()
+                self.wait_for_task(self.dialog)
+                self.assertIn(message, self.dialog.status.text())
+                self.assertEqual(cached.read_bytes(), saved)
 
     def test_close_cancels_inspection_and_waits_for_worker(self):
         self.dialog.url.setText(CUSTOM.source_url)
@@ -544,7 +542,8 @@ class RepositoryGuiTests(unittest.TestCase):
                 QTest.qWait(10)
                 time.sleep(0.001)
             self.assertIsNone(self.window.release_task)
-            self.assertEqual(discover.call_count, len(self.window.apps))
+            discover.assert_called_once()
+            self.assertEqual(discover.call_args.args[0].id, CUSTOM.id)
         self.assertEqual(self.window.tabs.tabText(2), "Updates (1)")
         with (
             patch("appharbour.window.latest_release", return_value=custom_release("0.9.5")),
@@ -612,7 +611,9 @@ class RepositoryGuiTests(unittest.TestCase):
             self.dialog.inspect_repository()
             self.wait_for_task(self.dialog)
         self.assertEqual(self.window.releases[CUSTOM.id], beta)
-        self.assertEqual(self.window.cards[CUSTOM.id].available_version.badge.text(), "Pre-release")
+        self.assertEqual(self.window.cards[CUSTOM.id].available_version.text.text(), "Available")
+        self.assertTrue(self.window.cards[CUSTOM.id].available_version.badge.isHidden())
+        self.assertEqual(self.dialog.version_label.badge.text(), "Pre-release")
         self.dialog.release_channel.setCurrentIndex(0)
         self.assertNotIn(CUSTOM.id, self.window.releases)
         self.assertFalse(self.window.cards[CUSTOM.id].app.include_prereleases)

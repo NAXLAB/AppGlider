@@ -12,13 +12,21 @@ offer **Launch**. Loose AppImages and installations from other launchers are ign
 
 ## Updates and removal
 
-**Refresh releases** checks the whole catalog, including apps you have not installed.
-On startup, cached release information appears first, followed by background checks.
+**Refresh releases** checks installed applications only. Startup checks use the same scope.
+Cached release information appears first, followed by background checks for installed apps.
 Successful results less than five minutes old are reused; older results are refreshed
 from GitHub. Clicking **Refresh releases** bypasses this freshness window. These checks
 do not download or install applications. Use **Update** on a card or **Update all** to install eligible versions.
 One previous version is normally retained for **⋯ → Roll back**.
 Failed or cancelled downloads leave the active version intact.
+
+Uninstalled cards show **Available** and **Install**, without release versions or badges.
+Installing checks the eligible release using the saved preference and the five-minute
+request cache, then downloads and verifies the AppImage. To inspect an uninstalled app
+without installing it, click its name and choose **Check releases** in its details.
+This explicit check bypasses the request cache. Adding a repository still inspects its
+release and published checksum before adding the card. With no installed apps, startup
+makes no release requests and the main and tray refresh actions are disabled.
 
 **⋯ → Uninstall…** removes AppHarbour-owned AppImages and their shortcut. Documents and
 the application's own settings are preserved. An application cannot be uninstalled while
@@ -63,7 +71,7 @@ this preference when its API quota is exhausted. If a project only publishes pre
 that previews must be enabled before adding it.
 
 Checked release information is retained across restarts, even after its five-minute
-request cache expires. Cards show when it was checked, whether a refresh is needed and
+request cache expires. Installed cards show when it was checked, whether a refresh is needed and
 whether a refresh failed. Failed checks keep previously known versions and badges visible.
 Downloads still require a current successful lookup and verification. Background checks
 run one app at a time and keep application launching and release preferences available.

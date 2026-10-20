@@ -16,10 +16,10 @@ Versions shown are illustrative.
 ## Features
 
 - Install and launch applications from a searchable card library.
-- Discover releases in the background, update installed apps and roll back to the previous version.
+- Check installed apps for updates in the background and roll back to the previous version.
 - Verify downloads against published SHA-256 checksums before installation.
 - Add supported GitHub repositories directly from the library.
-- Choose stable releases or include previews from each card’s menu, with release badges before installation.
+- Choose stable releases or include previews from each card’s menu, and inspect releases in app details.
 - Discover their application icons or choose a local PNG/SVG, with offline icon storage.
 - Create application-menu shortcuts and access the launcher from the system tray.
 
@@ -30,11 +30,11 @@ left alone. **Installed (N)** and **Updates (N)** show library totals, even whil
 
 The AppHarbour AppImage includes Python and Qt. Use a release AppImage, or follow the
 [build instructions](docs/development.md#build-the-appimage) to create one locally.
-For version 0.2.0:
+For version 0.2.1:
 
 ```sh
-chmod +x AppHarbour-0.2.0-linux-x86_64.AppImage
-./AppHarbour-0.2.0-linux-x86_64.AppImage
+chmod +x AppHarbour-0.2.1-linux-x86_64.AppImage
+./AppHarbour-0.2.1-linux-x86_64.AppImage
 ```
 
 Keep the file in a permanent location: AppHarbour creates a menu shortcut pointing to it.

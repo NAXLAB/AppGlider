@@ -226,7 +226,9 @@ class AppCard(QFrame):
             and (release is None or release.version != installed.version)
         )
         self.available_version.setVisible(bool(newer or not installed))
-        if release:
+        if not installed:
+            self.available_version.set_version("Available")
+        elif release:
             self.available_version.set_version(
                 f"v{release.version}",
                 release.prerelease,
@@ -246,7 +248,7 @@ class AppCard(QFrame):
                 if refreshing
                 else "Release not checked"
             )
-        self.available_version.setToolTip(error)
+        self.available_version.setToolTip(error if installed else "Release checked when installing")
         self.installed_version.setVisible(installed is not None)
         if installed:
             latest = info.stable.release if info and info.stable else release
@@ -274,15 +276,14 @@ class AppCard(QFrame):
         else:
             checked = "Release information not checked"
         self.checked.setText(checked)
+        self.checked.setVisible(installed is not None)
         self.checked.setToolTip(
             refresh_error or error or (f"Last checked {stamp}" if stamp else "")
         )
-        if not installed and info:
-            self.action_button.setEnabled(not busy and release is not None)
         self.action_button.setToolTip(
             f"Launch {installed.path}"
             if installed
-            else error or "Download and verify the selected AppImage release"
+            else "Check the eligible release, then download and verify its AppImage"
         )
         if release:
             self.update_button.setToolTip(
@@ -323,6 +324,8 @@ class CardGrid(QWidget):
 
 
 class DetailsDialog(QDialog):
+    check_requested = Signal()
+
     def __init__(
         self,
         app: App,
@@ -334,6 +337,8 @@ class DetailsDialog(QDialog):
         release_info: ReleaseInfo | None = None,
     ) -> None:
         super().__init__(parent)
+        self.app = app
+        self.installed = installed
         self.setWindowTitle(f"About {app.name}")
         self.setMinimumWidth(440)
         layout = QVBoxLayout(self)
@@ -354,21 +359,10 @@ class DetailsDialog(QDialog):
         repo.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         info.addRow("Repository", repo)
         info.addRow("Format", QLabel("Linux AppImage"))
-        installed_label = VersionLabel()
-        latest = release_info.stable.release if release_info and release_info.stable else release
-        installed_label.set_version(
-            installed.version or "Unknown" if installed else "Not installed",
-            bool(installed and installed.prerelease),
-            bool(installed and latest and installed.version == latest.version and latest.is_latest),
-        )
-        info.addRow("Installed version", installed_label)
-        available_label = VersionLabel()
-        available_label.set_version(
-            release.version if release else "Not checked",
-            bool(release and release.prerelease),
-            bool(release and release.is_latest),
-        )
-        info.addRow("Available release", available_label)
+        self.installed_label = VersionLabel()
+        info.addRow("Installed version", self.installed_label)
+        self.available_label = VersionLabel()
+        info.addRow("Available release", self.available_label)
         info.addRow(
             "Release preference",
             QLabel(
@@ -377,40 +371,82 @@ class DetailsDialog(QDialog):
                 else "Stable releases only"
             ),
         )
-        if release_info:
-            for label, option in (
-                ("Stable release", release_info.stable),
-                ("Preview release", release_info.preview),
-            ):
-                if option is None or (release and option.version == release.version):
-                    continue
-                version_label = VersionLabel()
-                version_label.set_version(
-                    option.version + (" · unavailable" if option.release is None else ""),
-                    bool(option.release and option.release.prerelease),
-                    bool(option.release and option.release.is_latest),
-                )
-                version_label.setToolTip(option.error)
-                info.addRow(label, version_label)
+        self.stable_label = VersionLabel()
+        self.preview_label = VersionLabel()
+        info.addRow("Stable release", self.stable_label)
+        info.addRow("Preview release", self.preview_label)
+        self.release_form = info
         if installed:
             location = QLabel(str(installed.path))
             location.setWordWrap(True)
             location.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
             info.addRow("Location", location)
         layout.addLayout(info)
-        note = QLabel(
-            error
-            or "Installed apps and their updates are managed by AppHarbour. "
-            "Downloads are verified against their published SHA-256."
-        )
-        note.setObjectName("muted")
-        note.setWordWrap(True)
-        layout.addWidget(note)
+        self.note = QLabel()
+        self.note.setObjectName("muted")
+        self.note.setWordWrap(True)
+        layout.addWidget(self.note)
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        self.check_button = buttons.addButton(
+            "Check releases", QDialogButtonBox.ButtonRole.ActionRole
+        )
+        self.check_button.clicked.connect(self.check_requested.emit)
         source = buttons.addButton("Open repository", QDialogButtonBox.ButtonRole.ActionRole)
         source.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(app.source_url)))
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
+        self.set_release_info(release, release_info, error)
+
+    def set_release_info(
+        self, release: Release | None, info: ReleaseInfo | None, error: str = ""
+    ) -> None:
+        installed = self.installed
+        latest = info.stable.release if info and info.stable else release
+        self.installed_label.set_version(
+            installed.version or "Unknown" if installed else "Not installed",
+            bool(installed and installed.prerelease),
+            bool(installed and latest and installed.version == latest.version and latest.is_latest),
+        )
+        self.available_label.set_version(
+            release.version if release else "Not checked" if info is None else "Unavailable",
+            bool(release and release.prerelease),
+            bool(release and release.is_latest),
+        )
+        for label, option in (
+            (self.stable_label, info.stable if info else None),
+            (self.preview_label, info.preview if info else None),
+        ):
+            self.release_form.setRowVisible(
+                label, option is not None and (release is None or option.version != release.version)
+            )
+            if option:
+                label.set_version(
+                    option.version + (" · unavailable" if option.release is None else ""),
+                    bool(option.release and option.release.prerelease),
+                    bool(option.release and option.release.is_latest),
+                )
+                label.setToolTip(option.error)
+        self.note.setText(
+            error
+            or "Check releases to inspect stable and preview versions without downloading an app."
+        )
+
+    def release_check_finished(self, result: TaskResult) -> None:
+        info = result.release_infos.get(self.app.id)
+        if info:
+            choice = info.choice(self.app.include_prereleases)
+            self.set_release_info(
+                choice.release if choice else None, info, info.error(self.app.include_prereleases)
+            )
+        else:
+            self.note.setText(result.message)
+        self.check_button.setEnabled(True)
+        self.check_button.setText("Check releases")
+
+    def release_check_failed(self, error: str) -> None:
+        self.note.setText(error)
+        self.check_button.setEnabled(True)
+        self.check_button.setText("Check releases")
 
 
 class SettingsDialog(QDialog):
@@ -635,6 +671,9 @@ class LauncherWindow(QMainWindow):
         self.update_all_button.clicked.connect(self.update_all)
         navigation.addWidget(self.update_all_button)
         self.check_button = QPushButton("Refresh releases")
+        self.check_button.setToolTip(
+            "Check installed applications for eligible stable and preview updates"
+        )
         self.check_button.clicked.connect(lambda: self.refresh_releases(force=True))
         navigation.addWidget(self.check_button)
         layout.addLayout(navigation)
@@ -671,7 +710,7 @@ class LauncherWindow(QMainWindow):
         self.cards = {app.id: self.create_card(app) for app in self.apps}
         self.search.textChanged.connect(self.refresh)
         self.tabs.currentChanged.connect(self.refresh)
-        QApplication.styleHints().colorSchemeChanged.connect(lambda _: self.apply_theme())
+        QApplication.styleHints().colorSchemeChanged.connect(self.apply_theme)
         self.scroll_area.viewport().installEventFilter(self)
         self.tray = QSystemTrayIcon(self.windowIcon(), self)
         self.tray_menu = QMenu(self)
@@ -733,7 +772,7 @@ class LauncherWindow(QMainWindow):
         self.tabs.setTabText(1, f"Installed ({len(self.installed)})")
         self.tabs.setTabText(2, f"Updates ({update_count})")
         self.tray.setToolTip(f"AppHarbour · Updates: {update_count}")
-        self.tray_check_action.setEnabled(self.release_task is None and bool(self.apps))
+        self.tray_check_action.setEnabled(self.release_task is None and bool(self.installed))
         self.tray_apps_menu.clear()
         self.tray_apps_menu.setEnabled(bool(self.installed))
         for app in self.apps:
@@ -770,7 +809,7 @@ class LauncherWindow(QMainWindow):
             card.setVisible(app_id in ids)
         self.add_app_button.setEnabled(self.task is None)
         self.check_button.setText("Refreshing…" if self.release_task else "Refresh releases")
-        self.check_button.setEnabled(self.release_task is None)
+        self.check_button.setEnabled(self.release_task is None and bool(self.installed))
         self.update_all_button.setVisible(
             any(item.managed and self.has_update(app_id) for app_id, item in self.installed.items())
         )
@@ -794,7 +833,11 @@ class LauncherWindow(QMainWindow):
                 "Your library is empty.\nChoose Install from All apps to get started."
             )
         elif self.tabs.currentIndex() == 2:
-            self.empty.setText("No known updates.\nUse Refresh releases to look for new releases.")
+            self.empty.setText(
+                "No known updates.\nUse Refresh releases to look for new releases."
+                if self.installed
+                else "No installed apps to check.\nInstall an app from All apps to get started."
+            )
         else:
             self.empty.setText("No apps match your search.\nTry another name or clear the search.")
 
@@ -809,7 +852,28 @@ class LauncherWindow(QMainWindow):
             icon_path=self.library.icon_path(app),
             release_info=self.release_infos.get(app_id),
         )
+        dialog.check_button.setEnabled(self.task is None)
+
+        def check_releases() -> None:
+            if self.task is not None:
+                return
+
+            def operation(cancel: Event, progress: Progress) -> TaskResult:
+                info = discover_releases(
+                    app, cancel, self.library.data_dir / "release-cache", force=True
+                )
+                return TaskResult("Release checked.", release_infos={app.id: info})
+
+            dialog.check_button.setEnabled(False)
+            dialog.check_button.setText("Checking…")
+            self.start_task(f"Checking releases for {app.name}…", operation)
+            if self.task is not None:
+                self.task.signals.finished.connect(dialog.release_check_finished)
+                self.task.signals.failed.connect(dialog.release_check_failed)
+
+        dialog.check_requested.connect(check_releases)
         dialog.exec()
+        dialog.deleteLater()
 
     def open_settings(self, section: int = 0) -> None:
         dialog = SettingsDialog(self.settings, self)
@@ -911,7 +975,7 @@ class LauncherWindow(QMainWindow):
                     f"The application exited with code {code}.\nIts diagnostic log is:\n{log}",
                 )
 
-        QTimer.singleShot(1800, check_startup)
+        QTimer.singleShot(1800, self, check_startup)
 
     def start_task(self, message: str, operation: Callable[[Event, Progress], TaskResult]) -> None:
         if self.task is not None:
@@ -953,6 +1017,11 @@ class LauncherWindow(QMainWindow):
     def task_finished(self, result: TaskResult) -> None:
         self.releases.update(result.releases)
         for app in self.apps:
+            checked_info = result.release_infos.get(app.id)
+            if checked_info is not None:
+                self.release_infos[app.id] = checked_info
+                self.release_errors.pop(app.id, None)
+                self.apply_release_info(app)
             release = result.releases.get(app.id)
             if release is not None:
                 info = remember_release(app, release, self.library.data_dir / "release-cache")
@@ -1000,7 +1069,11 @@ class LauncherWindow(QMainWindow):
         self.scan_installed()
         if self.background_enabled:
             self.queue_release_checks(
-                [app.id for app in self.apps if app.id not in self.release_infos]
+                [
+                    app.id
+                    for app in self.apps
+                    if app.id in self.installed and app.id not in self.release_infos
+                ]
             )
 
     def refresh_releases(self, *, force: bool = False) -> None:
@@ -1008,12 +1081,19 @@ class LauncherWindow(QMainWindow):
             return
         self.background_enabled = True
         self.scan_installed()
+        if not self.installed:
+            self.footer.setText("Install an application to enable release checks.")
+            return
         self.release_force = force
-        self.queue_release_checks([app.id for app in self.apps])
+        self.queue_release_checks([app.id for app in self.apps if app.id in self.installed])
 
     def queue_release_checks(self, app_ids: list[str]) -> None:
         for app_id in app_ids:
-            if app_id not in self.release_queue and app_id != self.release_checking:
+            if (
+                app_id in self.installed
+                and app_id not in self.release_queue
+                and app_id != self.release_checking
+            ):
                 self.release_queue.append(app_id)
         if self.release_task is None:
             self.next_release_check()
@@ -1025,7 +1105,7 @@ class LauncherWindow(QMainWindow):
         apps = {app.id: app for app in self.apps}
         while self.release_queue:
             app_id = self.release_queue.pop(0)
-            if app_id in apps:
+            if app_id in apps and app_id in self.installed:
                 break
         else:
             self.release_checking = None
@@ -1035,7 +1115,7 @@ class LauncherWindow(QMainWindow):
                     "Release refresh finished."
                     + (
                         " Some checks failed; cards retain previously known information."
-                        if self.release_errors
+                        if any(app_id in self.installed for app_id in self.release_errors)
                         else ""
                     )
                 )

@@ -568,11 +568,14 @@ class RepositoriesDialog(QDialog):
         app = self.icon_target
 
         def operation(cancel: Event, progress: Progress) -> TaskResult:
-            return TaskResult("Icons inspected.", icons=discover_icons(app, cancel))
+            return TaskResult(
+                "No icon found. Choose an image to replace the current icon.",
+                icons=discover_icons(app, cancel),
+            )
 
         self.task = Task(operation)
         self.task.signals.finished.connect(self.icons_finished)
-        self.task.signals.failed.connect(lambda error: self.icons_finished(TaskResult(error)))
+        self.task.signals.failed.connect(self.icons_failed)
         self.set_busy(True)
         self.status.setText(f"Looking for icons for {app.name}…")
         QThreadPool.globalInstance().start(self.task)
@@ -584,10 +587,13 @@ class RepositoriesDialog(QDialog):
             super().reject()
             return
         if not result.icons:
-            self.status.setText("No icon found. Choose an image to replace the current icon.")
+            self.status.setText(result.message)
             return
         self.set_icon_options(result.icons)
         self.select_icon(0)
+
+    def icons_failed(self, error: str) -> None:
+        self.icons_finished(TaskResult(error))
 
     def remove_repository(self) -> None:
         item = self.repo_list.currentItem()

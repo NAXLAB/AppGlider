@@ -6,7 +6,6 @@ import hashlib
 import json
 import os
 import re
-import shutil
 import subprocess
 import tempfile
 from collections.abc import Iterator
@@ -54,9 +53,14 @@ class Installed:
 def check_appimage(path: Path) -> None:
     with path.open("rb") as source:
         head = source.read(20)
-    if head[:4] != b"\x7fELF" or head[8:11] != b"AI\x02" or len(head) < 20:
+    if (
+        head[:4] != b"\x7fELF"
+        or head[4:6] != b"\x02\x01"
+        or head[8:11] != b"AI\x02"
+        or len(head) < 20
+    ):
         raise ValueError("The selected file is not a type 2 AppImage.")
-    machine = int.from_bytes(head[18:20], "little" if head[5] == 1 else "big")
+    machine = int.from_bytes(head[18:20], "little")
     expected = {"x86_64": 62, "aarch64": 183}[architecture()]
     if machine != expected:
         raise ValueError("This AppImage was built for a different CPU architecture.")
@@ -452,18 +456,65 @@ class Library:
             old = records.get(app.id)
             if not old or not old.managed:
                 raise ValueError("Only applications installed by this launcher can be removed.")
-            paths = [p for p in (old.path, old.previous) if p is not None]
+            paths = list(dict.fromkeys(p for p in (old.path, old.previous) if p is not None))
             for path in paths:
                 self._owned(app, path)
                 if running(path):
                     raise ValueError(f"Close {app.name} before removing it.")
-            for path in paths:
-                self._remove_file(app, path)
-            del records[app.id]
-            self._save(records)
+                if path.exists() and not path.is_file():
+                    raise ValueError(f"The AppImage path is not a regular file: {path}")
+            # Keep both binaries recoverable until the library change has been saved.
+            staged: list[tuple[Path, Path]] = []
+            try:
+                for path in paths:
+                    if not path.exists():
+                        continue
+                    fd, temporary = tempfile.mkstemp(prefix=".uninstall-", dir=path.parent)
+                    os.close(fd)
+                    stage = Path(temporary)
+                    try:
+                        path.rename(stage)
+                    except OSError:
+                        stage.unlink()
+                        raise
+                    staged.append((path, stage))
+                del records[app.id]
+                self._save(records)
+            except OSError as error:
+                recovery = []
+                for path, stage in reversed(staged):
+                    try:
+                        stage.rename(path)
+                    except OSError:
+                        recovery.append(f"{stage} → {path}")
+                if recovery:
+                    raise OSError(
+                        f"Uninstall failed ({error}). Restore these preserved AppImages manually: "
+                        + "; ".join(recovery)
+                    ) from error
+                raise
+            errors = []
+            for path, stage in staged:
+                try:
+                    stage.unlink()
+                except OSError as error:
+                    errors.append(f"{stage}: {error}")
+                with contextlib.suppress(OSError):
+                    path.parent.rmdir()
             shortcut = self.desktop_dir / f"appharbour-{app.id}.desktop"
-            if shortcut.is_file() and "X-AppHarbour=true" in shortcut.read_text().splitlines():
-                shortcut.unlink()
+            try:
+                if (
+                    not shortcut.is_symlink()
+                    and shortcut.is_file()
+                    and "X-AppHarbour=true" in shortcut.read_text().splitlines()
+                ):
+                    shortcut.unlink()
+            except OSError as error:
+                errors.append(f"{shortcut}: {error}")
+            if errors:
+                raise OSError(
+                    f"{app.name} was uninstalled, but cleanup failed: " + "; ".join(errors)
+                )
 
     def create_shortcut(self, app: App) -> None:
         with self._lock():
@@ -484,31 +535,37 @@ class Library:
         icon = self.data_dir / "icons" / "appharbour.png"
         if icon.parent.is_symlink() or icon.is_symlink():
             raise OSError("The shortcut icon path is a symbolic link; it was left untouched.")
-        icon.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(APP_ICON, icon)
-        shortcut.write_text(
-            "[Desktop Entry]\nType=Application\nName=AppHarbour\n"
-            "Comment=Install, update and launch Linux AppImages\n"
-            f"Exec={command}\nIcon={icon}\nTerminal=false\n"
-            "Categories=Utility;\nX-AppHarbour=true\n"
+        atomic_bytes(icon, APP_ICON.read_bytes())
+        atomic_bytes(
+            shortcut,
+            (
+                "[Desktop Entry]\nType=Application\nName=AppHarbour\n"
+                "Comment=Install, update and launch Linux AppImages\n"
+                f"Exec={command}\nIcon={icon}\nTerminal=false\n"
+                "Categories=Utility;\nX-AppHarbour=true\n"
+            ).encode(),
         )
         return shortcut
 
     def _shortcut(self, app: App, path: Path) -> None:
         self.desktop_dir.mkdir(parents=True, exist_ok=True)
         shortcut = self.desktop_dir / f"appharbour-{app.id}.desktop"
-        if shortcut.exists() and "X-AppHarbour=true" not in shortcut.read_text().splitlines():
+        if shortcut.is_symlink() or (
+            shortcut.exists() and "X-AppHarbour=true" not in shortcut.read_text().splitlines()
+        ):
             raise OSError("An existing desktop shortcut is not owned by this launcher.")
         icon = self.data_dir / "icons" / f"{app.id}.png"
         if icon.parent.is_symlink() or icon.is_symlink():
             raise OSError("The shortcut icon path is a symbolic link; it was left untouched.")
-        icon.parent.mkdir(parents=True, exist_ok=True)
         source = self.icon_path(app)
         if source.resolve() != icon.resolve():
-            shutil.copyfile(source, icon)
+            atomic_bytes(icon, source.read_bytes())
         command = desktop_exec([str(path)])
-        shortcut.write_text(
-            f"[Desktop Entry]\nType=Application\nName={app.name} (AppHarbour)\n"
-            f"Exec={command} %F\nIcon={icon}\nTerminal=false\n"
-            "Categories=Graphics;\nX-AppHarbour=true\n"
+        atomic_bytes(
+            shortcut,
+            (
+                f"[Desktop Entry]\nType=Application\nName={app.name} (AppHarbour)\n"
+                f"Exec={command} %F\nIcon={icon}\nTerminal=false\n"
+                "Categories=Graphics;\nX-AppHarbour=true\n"
+            ).encode(),
         )

@@ -14,7 +14,7 @@ from PySide6.QtGui import QImage, QImageReader, QPixmap
 
 from appharbour import APP_ICON
 from appharbour.catalog import App
-from appharbour.releases import check_cancel, read_metadata
+from appharbour.releases import RateLimited, check_cancel, read_metadata
 
 MAX_ICON_BYTES = 2 * 1024 * 1024
 
@@ -137,6 +137,8 @@ def discover_icons(app: App, cancel: Event) -> tuple[IconCandidate, ...]:
             config = configparser.ConfigParser(interpolation=None, strict=False)
             config.read_string(read_blob(path).decode("utf-8"))
             declared.add(PurePosixPath(config.get("Desktop Entry", "Icon")).stem.lower())
+        except RateLimited:
+            raise
         except (OSError, ValueError, configparser.Error):
             continue
 
@@ -186,6 +188,8 @@ def discover_icons(app: App, cancel: Event) -> tuple[IconCandidate, ...]:
         seen.add(stem)
         try:
             png = normalise_icon(read_blob(path))
+        except RateLimited:
+            raise
         except (OSError, ValueError):
             continue
         result.append(IconCandidate(path, png))

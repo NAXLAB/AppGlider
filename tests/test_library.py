@@ -97,7 +97,12 @@ class LibraryTests(unittest.TestCase):
 
     def test_rejects_invalid_or_wrong_architecture_appimages(self) -> None:
         location = self.root / "bad.AppImage"
-        for content in (b"not an appimage", appimage_bytes()[:18] + b"\xff\xff"):
+        for content in (
+            b"not an appimage",
+            appimage_bytes()[:18] + b"\xff\xff",
+            appimage_bytes()[:4] + b"\x01\x01" + appimage_bytes()[6:],
+            appimage_bytes()[:5] + b"\x00" + appimage_bytes()[6:],
+        ):
             location.write_bytes(content)
             with self.assertRaises(ValueError):
                 check_appimage(location)
@@ -196,6 +201,73 @@ class LibraryTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "preserved"):
             self.install("1.0.0")
         self.assertEqual(state.read_text(), "broken JSON")
+
+    def test_failed_uninstall_restores_both_versions_and_shortcut(self) -> None:
+        first = self.install("1.0.0")
+        second = self.install("1.1.0")
+        state = self.library.data_dir / "library.json"
+        shortcut = self.library.desktop_dir / f"appharbour-{APP.id}.desktop"
+        originals = {path: path.read_bytes() for path in (first.path, second.path, state, shortcut)}
+        rename = Path.rename
+
+        def fail_second_stage(path, target):
+            if path == first.path:
+                raise OSError("cannot stage previous version")
+            return rename(path, target)
+
+        for failure in (
+            patch.object(self.library, "_save", side_effect=OSError("disk full")),
+            patch.object(Path, "rename", autospec=True, side_effect=fail_second_stage),
+        ):
+            with failure, self.assertRaises(OSError):
+                self.library.remove(APP)
+            for path, contents in originals.items():
+                self.assertEqual(path.read_bytes(), contents)
+            self.assertEqual(self.library.scan()[APP.id], second)
+            self.assertFalse(list(second.path.parent.parent.glob("*/.uninstall-*")))
+
+    def test_uninstall_preserves_recovery_files_if_restoration_or_cleanup_fails(self) -> None:
+        installed = self.install("1.0.0")
+        contents = installed.path.read_bytes()
+        state = self.library.data_dir / "library.json"
+        original_state = state.read_bytes()
+        rename = Path.rename
+
+        def fail_restore(path, target):
+            if path.name.startswith(".uninstall-"):
+                raise OSError("cannot restore")
+            return rename(path, target)
+
+        with (
+            patch.object(self.library, "_save", side_effect=OSError("disk full")),
+            patch.object(Path, "rename", autospec=True, side_effect=fail_restore),
+            self.assertRaisesRegex(
+                OSError, "Restore these preserved AppImages manually"
+            ) as failure,
+        ):
+            self.library.remove(APP)
+        (recovery,) = installed.path.parent.glob(".uninstall-*")
+        self.assertIn(str(recovery), str(failure.exception))
+        self.assertEqual(recovery.read_bytes(), contents)
+        self.assertEqual(state.read_bytes(), original_state)
+        recovery.rename(installed.path)
+        unlink = Path.unlink
+
+        def fail_cleanup(path, *args, **kwargs):
+            if path.name.startswith(".uninstall-"):
+                raise OSError("cannot delete")
+            return unlink(path, *args, **kwargs)
+
+        with (
+            patch.object(Path, "unlink", autospec=True, side_effect=fail_cleanup),
+            self.assertRaisesRegex(OSError, "was uninstalled, but cleanup failed") as failure,
+        ):
+            self.library.remove(APP)
+        (recovery,) = installed.path.parent.glob(".uninstall-*")
+        self.assertIn(str(recovery), str(failure.exception))
+        self.assertEqual(recovery.read_bytes(), contents)
+        self.assertNotIn(APP.id, self.library.records())
+        self.assertFalse((self.library.desktop_dir / f"appharbour-{APP.id}.desktop").exists())
 
     def test_ownership_and_running_checks_protect_installed_files(self) -> None:
         installed = self.install("1.0.0")
@@ -315,6 +387,30 @@ class LibraryTests(unittest.TestCase):
         shortcut = self.library.create_launcher_shortcut(["/home/a b/AppHarbour.AppImage"])
         self.assertIn('Exec="/home/a b/AppHarbour.AppImage"\n', shortcut.read_text())
 
+    def test_failed_shortcut_write_preserves_the_previous_entry(self) -> None:
+        self.install("1.0.0")
+        self.library.create_launcher_shortcut(["/first/AppHarbour.AppImage"])
+        replace = os.replace
+        for name, repair in (
+            (f"appharbour-{APP.id}.desktop", lambda: self.library.create_shortcut(APP)),
+            ("appharbour.desktop", lambda: self.library.create_launcher_shortcut(["/second"])),
+        ):
+            shortcut = self.library.desktop_dir / name
+            original = shortcut.read_bytes()
+
+            def fail_shortcut(source, destination):
+                if destination == shortcut:
+                    raise OSError("disk full")
+                return replace(source, destination)
+
+            with (
+                patch("appharbour.storage.os.replace", side_effect=fail_shortcut),
+                self.assertRaisesRegex(OSError, "disk full"),
+            ):
+                repair()
+            self.assertEqual(shortcut.read_bytes(), original)
+            self.assertEqual(list(self.library.desktop_dir.glob(f".{name}-*")), [])
+
     def test_shortcut_commands_quote_special_characters_and_reject_control_characters(self) -> None:
         self.assertEqual(desktop_exec(["/a path/100%/app", "-m"]), '"/a path/100%%/app" "-m"')
         self.assertEqual(desktop_exec(['a"$`\\b']), '"a\\\\"\\\\$\\\\`\\\\\\\\b"')
@@ -351,6 +447,26 @@ class LibraryTests(unittest.TestCase):
         self.library.remove(APP)
         self.assertEqual(own.read_text(), contents)
         self.assertIn("another installer", original.read_text())
+
+    def test_shortcut_repair_preserves_existing_and_dangling_symlink_targets(self) -> None:
+        self.install("1.0.0")
+        shortcut = self.library.desktop_dir / f"appharbour-{APP.id}.desktop"
+        target = self.external / "foreign.desktop"
+        contents = "[Desktop Entry]\nName=Foreign\nX-AppHarbour=true\n"
+        for existing in (True, False):
+            with self.subTest(existing=existing):
+                if existing:
+                    target.write_text(contents)
+                else:
+                    target.unlink()
+                shortcut.unlink()
+                shortcut.symlink_to(target)
+                with self.assertRaisesRegex(OSError, "not owned"):
+                    self.library.create_shortcut(APP)
+                self.assertTrue(shortcut.is_symlink())
+                self.assertEqual(target.exists(), existing)
+                if existing:
+                    self.assertEqual(target.read_text(), contents)
 
 
 class ReleaseTests(unittest.TestCase):

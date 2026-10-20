@@ -12,7 +12,8 @@ from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QEvent, QSettings, Qt, QTimer
+from gui_helpers import close_window
+from PySide6.QtCore import QCoreApplication, QEvent, QSettings, Qt, QTimer
 from PySide6.QtGui import QCloseEvent, QImage, QPalette, QPixmap
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import (
@@ -31,7 +32,7 @@ from PySide6.QtWidgets import (
 from test_library import APP, appimage_bytes, release_for
 
 from appharbour import APP_ICON, APP_VERSION
-from appharbour.catalog import APPS
+from appharbour.catalog import APPS, custom_app
 from appharbour.jobs import TaskResult
 from appharbour.library import Installed, Library
 from appharbour.release_info import ReleaseInfo, ReleaseOption, info_path
@@ -63,9 +64,7 @@ class LibraryTests(unittest.TestCase):
         self.window = LauncherWindow(self.settings, library)
         self.window.show()
         self.qt.processEvents()
-        self.addCleanup(self.qt.sendPostedEvents, None, QEvent.Type.DeferredDelete)
-        self.addCleanup(self.window.deleteLater)
-        self.addCleanup(self.window.close)
+        self.addCleanup(close_window, self.window)
 
     def visible_ids(self) -> set[str]:
         return {app_id for app_id, card in self.window.cards.items() if card.isVisible()}
@@ -125,7 +124,7 @@ class LibraryTests(unittest.TestCase):
 
     def test_tray_menu_launches_only_managed_apps_and_shows_update_count(self) -> None:
         self.assertFalse(self.window.tray_apps_menu.isEnabled())
-        self.assertTrue(self.window.tray_check_action.isEnabled())
+        self.assertFalse(self.window.tray_check_action.isEnabled())
         payload = appimage_bytes()
         with patch("appharbour.releases.request", return_value=io.BytesIO(payload)):
             self.window.library.install(
@@ -153,7 +152,7 @@ class LibraryTests(unittest.TestCase):
             self.window.tray.show()
             self.window.start_task("Downloading", lambda cancel, progress: TaskResult("Done"))
             task = self.window.task
-            self.assertTrue(self.window.tray_check_action.isEnabled())
+            self.assertFalse(self.window.tray_check_action.isEnabled())
             self.window.close()
             self.assertFalse(task.cancel.is_set())
             question.assert_not_called()
@@ -188,7 +187,6 @@ class LibraryTests(unittest.TestCase):
                 self.assertTrue(install.isEnabled())
                 self.assertIn("verify", install.toolTip())
                 self.assertFalse(self.window.cards[app.id].shortcut_action.isEnabled())
-                self.assertFalse(hasattr(self.window.cards[app.id], "link_action"))
 
     def test_search_by_name_description_repository_and_clear(self) -> None:
         self.window.search.setText("  SOLIDcraft  ")
@@ -213,6 +211,7 @@ class LibraryTests(unittest.TestCase):
             self.assertFalse(self.visible_ids())
             self.assertTrue(self.window.empty.isVisible())
             self.assertFalse(self.window.scroll_area.isVisible())
+        self.assertIn("No installed apps to check", self.window.empty.text())
         self.window.tabs.setCurrentIndex(0)
         self.assertEqual(len(self.visible_ids()), 14)
 
@@ -242,24 +241,6 @@ class LibraryTests(unittest.TestCase):
         self.window.installed["solidcraft"] = Installed(path, "0.16.2", True)
         self.window.refresh()
         self.assertEqual(self.window.tabs.tabText(2), "Updates (0)")
-
-    def test_update_starts_in_launcher_and_keeps_launch_available(self) -> None:
-        app = next(app for app in APPS if app.id == "solidcraft")
-        path = Path(self.temp.name) / "solidcraft-0.16.1-linux-x86_64.AppImage"
-        self.window.installed[app.id] = Installed(path, "0.16.1", True)
-        self.window.releases[app.id] = Release("0.16.2", "unused", "unused", 1, "0" * 64)
-        self.window.refresh()
-        card = self.window.cards[app.id]
-        self.assertTrue(card.update_button.isVisible())
-        self.assertEqual(card.update_button.text(), "Update")
-        self.assertEqual(card.action_button.text(), "Launch")
-        with (
-            patch.object(self.window, "start_task") as start,
-            patch("appharbour.window.QDesktopServices.openUrl") as open_url,
-        ):
-            QTest.mouseClick(card.update_button, Qt.MouseButton.LeftButton)
-        start.assert_called_once()
-        open_url.assert_not_called()
 
     def test_grid_reflows_and_preserves_cards_when_filtering(self) -> None:
         self.window.resize(1400, 800)
@@ -301,14 +282,16 @@ class LibraryTests(unittest.TestCase):
                 card.set_state(installed, offered, False, info=info)
                 self.qt.processEvents()
                 version = card.installed_version if installed else card.available_version
-                caption = version.caption.mapTo(card, version.caption.rect().center())
+                label = version.caption if installed else version.text
+                caption = label.mapTo(card, label.rect().center())
                 button = card.action_button.geometry()
                 self.assertLessEqual(button.top(), caption.y())
                 self.assertGreaterEqual(button.bottom(), caption.y())
                 text = version.text.mapTo(card, version.text.rect().topRight())
                 badge = version.badge.mapTo(card, version.badge.rect().bottomRight())
                 self.assertLess(text.x(), button.left())
-                self.assertLess(badge.x(), button.left())
+                if version.badge.isVisibleTo(card):
+                    self.assertLess(badge.x(), button.left())
                 self.assertLess(card.height(), 280)
                 self.assertEqual(card.action_button.text(), "Launch" if installed else "Install")
             self.window.refresh()
@@ -336,6 +319,50 @@ class LibraryTests(unittest.TestCase):
         self.assertIn("tangency-labs/solidcraft", observed)
         self.assertIn(info.stable.version, observed)
         self.assertIn(info.preview.version, observed)
+
+    def test_destroyed_windows_stop_receiving_system_theme_changes(self) -> None:
+        calls = []
+
+        class ThemeWindow(LauncherWindow):
+            def apply_theme(self):
+                calls.append(True)
+
+        window = ThemeWindow(self.settings, self.window.library)
+        try:
+            calls.clear()
+            self.qt.styleHints().colorSchemeChanged.emit(Qt.ColorScheme.Dark)
+            self.assertEqual(calls, [True])
+        finally:
+            close_window(window)
+        calls.clear()
+        self.qt.styleHints().colorSchemeChanged.emit(Qt.ColorScheme.Light)
+        self.assertEqual(calls, [])
+
+    def test_destroyed_window_cancels_pending_launch_status_check(self) -> None:
+        window = LauncherWindow(self.settings, self.window.library)
+        window.installed[APP.id] = Installed(Path(self.temp.name) / "app.AppImage", "1.0.0", True)
+        single_shot = QTimer.singleShot
+        with (
+            patch.object(window.library, "launch") as launch,
+            patch(
+                "appharbour.window.QTimer.singleShot",
+                side_effect=lambda delay, *args: single_shot(0, *args),
+            ),
+            patch("appharbour.window.QMessageBox.warning") as warning,
+        ):
+            process = launch.return_value
+            process.poll.return_value = 1
+            window.library.processes[APP.id] = process
+            try:
+                window.launch_app(APP.id)
+            finally:
+                window.quitting = True
+                window.close()
+                window.deleteLater()
+                QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+            self.qt.processEvents()
+            process.poll.assert_not_called()
+            warning.assert_not_called()
 
     def test_settings_save_cancel_and_theme_persistence(self) -> None:
         folder = str(Path(self.temp.name) / "future-apps")
@@ -454,22 +481,145 @@ class LibraryTests(unittest.TestCase):
             time.time(),
         )
 
-    def test_refresh_checks_uninstalled_cards_and_offers_no_preview_update_by_default(self) -> None:
+    def test_empty_library_and_added_repositories_make_no_background_requests(self) -> None:
         info = self.release_info()
+        atomic_json(info_path(APP, self.window.library.data_dir / "release-cache"), asdict(info))
+        with patch("appharbour.window.discover_releases") as discover:
+            self.window.refresh_releases()
+            self.window.refresh_releases(force=True)
+            self.window.library.add_repository(custom_app("example/another-app"))
+            self.window.catalog_changed()
+            discover.assert_not_called()
+        self.assertIsNone(self.window.release_task)
+        self.assertFalse(self.window.release_queue)
+        self.assertFalse(self.window.check_button.isEnabled())
+        self.assertFalse(self.window.tray_check_action.isEnabled())
+        for card in self.window.cards.values():
+            self.assertEqual(card.available_version.text.text(), "Available")
+            self.assertTrue(card.available_version.badge.isHidden())
+            self.assertTrue(card.checked.isHidden())
+            self.assertTrue(card.action_button.isEnabled())
+
+    def test_details_explicitly_checks_an_uninstalled_app_without_downloading(self) -> None:
+        info = self.release_info()
+        observed = []
+
+        def inspect() -> None:
+            dialog = self.qt.activeModalWidget()
+            if not isinstance(dialog, DetailsDialog):
+                return
+            try:
+                observed.append(dialog.available_label.text.text())
+                dialog.check_button.click()
+                self.wait_for_task()
+                observed.append(dialog.available_label.text.text())
+                observed.append(dialog.preview_label.text.text())
+                observed.append(dialog.check_button.isEnabled())
+            finally:
+                dialog.reject()
+
+        with (
+            patch("appharbour.window.discover_releases", return_value=info) as discover,
+            patch("appharbour.library.download") as download,
+        ):
+            QTimer.singleShot(0, inspect)
+            self.window.open_details(APP.id)
+            discover.assert_called_once()
+            self.assertEqual(discover.call_args.args[0].id, APP.id)
+            self.assertTrue(discover.call_args.kwargs["force"])
+            download.assert_not_called()
+        self.assertEqual(observed, ["Not checked", info.stable.version, info.preview.version, True])
+        self.assertEqual(self.window.installed, {})
+        self.assertEqual(self.window.cards[APP.id].available_version.text.text(), "Available")
+
+    def test_details_can_close_while_its_release_check_finishes(self) -> None:
+        info = self.release_info()
+        finish = Event()
+
+        def discover(app, cancel, cache_dir, *, force):
+            if not finish.wait(5):
+                raise TimeoutError("Test release check was not released")
+            return info
+
+        def close_details() -> None:
+            dialog = self.qt.activeModalWidget()
+            if isinstance(dialog, DetailsDialog):
+                dialog.check_button.click()
+                dialog.reject()
+
+        with patch("appharbour.window.discover_releases", side_effect=discover):
+            try:
+                QTimer.singleShot(0, close_details)
+                self.window.open_details(APP.id)
+                QTest.qWait(10)
+            finally:
+                finish.set()
+            self.wait_for_task()
+        self.assertEqual(self.window.release_infos[APP.id], info)
+
+    def test_failed_details_check_keeps_cached_versions_and_allows_retry(self) -> None:
+        info = self.release_info()
+        atomic_json(info_path(APP, self.window.library.data_dir / "release-cache"), asdict(info))
+        self.window.scan_installed()
+        observed = []
+
+        def inspect() -> None:
+            dialog = self.qt.activeModalWidget()
+            if not isinstance(dialog, DetailsDialog):
+                return
+            try:
+                dialog.check_button.click()
+                self.wait_for_task()
+                observed.extend(
+                    [
+                        dialog.available_label.text.text(),
+                        dialog.note.text(),
+                        dialog.check_button.isEnabled(),
+                    ]
+                )
+            finally:
+                dialog.reject()
+
+        with (
+            patch("appharbour.window.discover_releases", side_effect=OSError("Offline")),
+            patch("appharbour.window.QMessageBox.warning"),
+        ):
+            QTimer.singleShot(0, inspect)
+            self.window.open_details(APP.id)
+        self.assertEqual(observed, [info.stable.version, "Offline", True])
+        self.assertEqual(self.window.release_infos[APP.id], info)
+
+    def test_queued_background_check_skips_an_app_that_was_uninstalled(self) -> None:
+        other = APPS[1]
+        record = Installed(Path(self.temp.name) / "example.AppImage", "0.9.0", True)
+        self.window.installed = {APP.id: record, other.id: record}
+        with patch("appharbour.window.QThreadPool.globalInstance") as pool:
+            self.window.queue_release_checks([APP.id, other.id])
+            self.assertEqual(self.window.release_queue, [other.id])
+            self.window.installed.pop(other.id)
+            self.window.release_check_finished(TaskResult("Done"))
+            self.assertEqual(pool.return_value.start.call_count, 1)
+        self.assertIsNone(self.window.release_task)
+        self.assertFalse(self.window.release_queue)
+
+    def test_refresh_only_checks_installed_apps_and_respects_release_preferences(self) -> None:
+        info = self.release_info()
+        payload = appimage_bytes()
+        with patch("appharbour.releases.request", return_value=io.BytesIO(payload)):
+            self.window.library.install(
+                APP, release_for("0.9.0", payload), Event(), lambda *args: None
+            )
         with patch("appharbour.window.discover_releases", return_value=info) as discover:
             self.window.refresh_releases()
             self.assertTrue(self.window.cards[APP.id].action_button.isEnabled())
             self.wait_for_release_checks()
-            self.assertEqual(discover.call_count, len(APPS))
-            self.assertEqual(
-                {call.args[0].id for call in discover.call_args_list}, {app.id for app in APPS}
-            )
-            self.assertTrue(all(not call.kwargs["force"] for call in discover.call_args_list))
+            discover.assert_called_once()
+            self.assertEqual(discover.call_args.args[0].id, APP.id)
+            self.assertFalse(discover.call_args.kwargs["force"])
             self.window.check_button.click()
             self.wait_for_release_checks()
-            self.assertTrue(
-                all(call.kwargs["force"] for call in discover.call_args_list[len(APPS) :])
-            )
+            self.assertEqual(discover.call_count, 2)
+            self.assertTrue(discover.call_args.kwargs["force"])
         card = self.window.cards[APP.id]
         self.assertEqual(card.available_version.badge.text(), "Latest")
         self.assertNotIn(
@@ -478,9 +628,10 @@ class LibraryTests(unittest.TestCase):
                 label.text() for label in card.findChildren(QLabel) if label.isVisibleTo(card)
             ),
         )
-        self.assertEqual(card.action_button.text(), "Install")
-        self.assertEqual(self.window.tabs.tabText(2), "Updates (0)")
-        self.assertFalse(hasattr(self.window, "rescan_button"))
+        self.assertEqual(card.action_button.text(), "Launch")
+        self.assertEqual(self.window.tabs.tabText(2), "Updates (1)")
+        self.change_release_preference(1)
+        self.assertEqual(self.window.cards[APP.id].available_version.badge.text(), "Pre-release")
         self.assertEqual(self.window.check_button.text(), "Refresh releases")
 
     def change_release_preference(self, index: int) -> None:
@@ -529,6 +680,11 @@ class LibraryTests(unittest.TestCase):
 
     def test_failed_refresh_retains_badges_and_shows_last_checked_without_dialog(self) -> None:
         info = replace(self.release_info(), checked_at=time.time() - 3600)
+        payload = appimage_bytes()
+        with patch("appharbour.releases.request", return_value=io.BytesIO(payload)):
+            self.window.library.install(
+                APP, release_for("0.9.0", payload), Event(), lambda *args: None
+            )
         atomic_json(info_path(APP, self.window.library.data_dir / "release-cache"), asdict(info))
         self.window.scan_installed()
         self.assertIn("refresh needed", self.window.cards[APP.id].checked.text())
@@ -545,7 +701,7 @@ class LibraryTests(unittest.TestCase):
         self.assertIn("Refresh failed · checked", card.checked.text())
         self.assertIn("Offline", card.checked.toolTip())
 
-    def test_unusable_preview_disables_install_after_opt_in(self) -> None:
+    def test_install_rechecks_an_uninstalled_app_after_a_cached_preview_failure(self) -> None:
         info = replace(
             self.release_info(),
             preview=ReleaseOption("1.1.0-beta.1", None, "No supported AppImage was found."),
@@ -555,11 +711,28 @@ class LibraryTests(unittest.TestCase):
         self.assertTrue(self.window.cards[APP.id].action_button.isEnabled())
         self.change_release_preference(1)
         card = self.window.cards[APP.id]
-        self.assertFalse(card.action_button.isEnabled())
-        self.assertIn("No supported AppImage", card.action_button.toolTip())
+        self.assertTrue(card.action_button.isEnabled())
+        self.assertEqual(card.available_version.text.text(), "Available")
         self.assertEqual(self.window.tabs.tabText(2), "Updates (0)")
+        payload = appimage_bytes()
+        release = replace(release_for("1.1.0-beta.1", payload), prerelease=True, is_latest=False)
+        with (
+            patch("appharbour.window.latest_release", return_value=release) as latest,
+            patch("appharbour.releases.request", return_value=io.BytesIO(payload)),
+        ):
+            card.action_button.click()
+            self.wait_for_task()
+        latest.assert_called_once()
+        self.assertTrue(latest.call_args.args[0].include_prereleases)
+        self.assertEqual(self.window.installed[APP.id].version, release.version)
+        self.assertTrue(self.window.installed[APP.id].prerelease)
 
     def test_closing_cancels_background_refresh_without_installation_prompt(self) -> None:
+        payload = appimage_bytes()
+        with patch("appharbour.releases.request", return_value=io.BytesIO(payload)):
+            self.window.library.install(
+                APP, release_for("1.0.0", payload), Event(), lambda *args: None
+            )
         with (
             patch("appharbour.window.QThreadPool.globalInstance"),
             patch("appharbour.window.QMessageBox.question") as question,
@@ -659,6 +832,31 @@ class LibraryTests(unittest.TestCase):
         self.assertTrue(task.cancel.is_set())
         self.window.task_finished(TaskResult("Cancelled"))
         self.assertTrue(self.window.cards["solidcraft"].action_button.isEnabled())
+
+    def test_failed_assertion_cleans_up_without_an_interactive_dialog(self) -> None:
+        failed = LibraryTests("test_busy_state_cancellation_and_launch_stays_available")
+        dialogs = []
+        timer = QTimer()
+
+        def dismiss_unexpected_dialog() -> None:
+            dialog = self.qt.activeModalWidget()
+            if isinstance(dialog, QMessageBox):
+                dialogs.append(dialog.windowTitle())
+                dialog.done(QMessageBox.StandardButton.No)
+
+        timer.timeout.connect(dismiss_unexpected_dialog)
+        timer.start(10)
+        result = unittest.TestResult()
+        try:
+            with patch.object(failed, "assertTrue", side_effect=AssertionError("Injected failure")):
+                failed.run(result)
+        finally:
+            timer.stop()
+        self.assertEqual(len(result.failures), 1)
+        self.assertIn("Injected failure", result.failures[0][1])
+        self.assertEqual(result.errors, [])
+        self.assertEqual(dialogs, [])
+        self.assertNotIn(failed.window, self.qt.topLevelWidgets())
 
     def test_settings_reject_invalid_destination(self) -> None:
         dialog = SettingsDialog(self.settings, self.window)

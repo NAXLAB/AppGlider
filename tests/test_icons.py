@@ -130,6 +130,24 @@ class IconTests(unittest.TestCase):
             with self.assertRaises(RateLimited):
                 discover_icons(CUSTOM, Event())
 
+    def test_rate_limit_during_desktop_or_icon_download_stops_lookup(self):
+        for path, data in (
+            ("app.desktop", b"[Desktop Entry]\nIcon=app\n"),
+            ("assets/icon.svg", SVG),
+        ):
+            _, read = self.metadata({path: data})
+            tree = read("https://api.github.com/repos/owner/example-app/git/trees/HEAD?recursive=1")
+            with (
+                self.subTest(path=path),
+                patch(
+                    "appharbour.icons.read_metadata",
+                    side_effect=[tree, RateLimited("api.github.com", 1)],
+                ) as metadata,
+                self.assertRaises(RateLimited),
+            ):
+                discover_icons(CUSTOM, Event())
+            self.assertEqual(metadata.call_count, 2)
+
     def test_saved_icon_survives_restart_and_failed_replacement(self):
         self.library.add_repository(CUSTOM)
         self.library.set_icon(CUSTOM, SVG)
