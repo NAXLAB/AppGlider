@@ -326,6 +326,10 @@ class Library:
         except (OSError, ValueError) as error:
             raise ValueError(f"Cannot read {path}. The file was preserved: {error}") from error
 
+    def reap_processes(self) -> None:
+        """Forget launched applications that have exited so they do not linger as zombies."""
+        self.processes = {key: proc for key, proc in self.processes.items() if proc.poll() is None}
+
     def _save(self, records: dict[str, Installed], drop: set[str] | None = None) -> None:
         saved: dict[str, object] = {
             app_id: item
@@ -405,9 +409,7 @@ class Library:
             if log.stat().st_size > MAX_LOG_BYTES:
                 os.replace(log, log.with_name(log.name + ".1"))
         with log.open("ab") as output:
-            self.processes = {
-                key: proc for key, proc in self.processes.items() if proc.poll() is None
-            }
+            self.reap_processes()
             previous = self.processes.get(app.id)
             if previous is not None:
                 raise ValueError(f"{app.name} is already running from this launcher.")

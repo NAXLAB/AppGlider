@@ -17,7 +17,7 @@ from threading import Event, Lock
 from typing import IO, Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, unquote, urljoin, urlsplit
-from urllib.request import HTTPRedirectHandler, Request, build_opener
+from urllib.request import HTTPRedirectHandler, OpenerDirector, Request, build_opener
 
 from appharbour import APP_VERSION, github_status
 from appharbour.catalog import App
@@ -190,9 +190,20 @@ def request(url: str, *, method: str = "GET", etag: str = "") -> Any:
     raise AssertionError("unreachable")  # pragma: no cover
 
 
+_OPENER: tuple[Callable[..., OpenerDirector], OpenerDirector] | None = None
+
+
+def _opener() -> OpenerDirector:
+    """Share one stateless opener between threads; rebuild if the factory is replaced."""
+    global _OPENER
+    if _OPENER is None or _OPENER[0] is not build_opener:
+        _OPENER = (build_opener, build_opener(GitHubRedirect()))
+    return _OPENER[1]
+
+
 def _open(req: Request, host: str) -> Any:
     try:
-        response = build_opener(GitHubRedirect()).open(req, timeout=20)
+        response = _opener().open(req, timeout=20)
         if host == "api.github.com":
             github_status.observe_headers(dict(response.headers.items()))
         return response
@@ -802,6 +813,11 @@ def restore_rate_limits(cache_dir: Path) -> None:
         pass
 
 
+def save_rate_limits(cache_dir: Path) -> None:
+    with contextlib.suppress(OSError):
+        atomic_json(cache_dir / "limits.json", dict(_RETRY_AFTER))
+
+
 def latest_release(app: App, cancel: Event, cache_dir: Path | None = None) -> Release:
     check_cancel(cancel)
     if cache_dir is not None:
@@ -814,8 +830,7 @@ def latest_release(app: App, cancel: Event, cache_dir: Path | None = None) -> Re
         github_status.release_result("GitHub API", app.repo, time.time())
     except RateLimited:
         if cache_dir is not None:
-            with contextlib.suppress(OSError):
-                atomic_json(cache_dir / "limits.json", _RETRY_AFTER)
+            save_rate_limits(cache_dir)
         release = page_release(app, cancel)
         github_status.release_result("Public GitHub pages", app.repo, time.time())
     check_cancel(cancel)

@@ -192,8 +192,7 @@ def discover_releases(
         info = inspect_entries(app, releases.api_entries(app, cancel), cancel)
         github_status.release_result("GitHub API", app.repo, info.checked_at)
     except releases.RateLimited:
-        with contextlib.suppress(OSError):
-            atomic_json(cache_dir / "limits.json", releases._RETRY_AFTER)
+        releases.save_rate_limits(cache_dir)
         info = inspect_entries(app, releases.page_entries(app, cancel), cancel, public=True)
         github_status.release_result("Public GitHub pages", app.repo, info.checked_at)
     releases.check_cancel(cancel)

@@ -1084,6 +1084,7 @@ class LauncherWindow(QMainWindow):
             apps = self.library.apps
             installed = self.library.scan()
             orphans = self.library.orphans()
+            self.library.reap_processes()
         except (OSError, ValueError) as error:
             self.footer.setText(str(error))
         else:

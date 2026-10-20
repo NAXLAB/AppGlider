@@ -516,6 +516,19 @@ class ReleaseTests(unittest.TestCase):
             with self.assertRaisesRegex(OSError, "Offline"):
                 releases.latest_release(APP, Event(), self.cache)
 
+    def test_opener_is_shared_and_rate_limits_are_saved_publicly(self) -> None:
+        with patch.object(releases, "build_opener") as build:
+            first, second = releases._opener(), releases._opener()
+            self.assertIs(first, second)
+            build.assert_called_once()
+        with (
+            tempfile.TemporaryDirectory() as temp,
+            patch.dict(releases._RETRY_AFTER, {"api.github.com": time.time() + 60}, clear=True),
+        ):
+            releases.save_rate_limits(Path(temp))
+            saved = json.loads((Path(temp) / "limits.json").read_text())
+            self.assertEqual(saved, releases._RETRY_AFTER)
+
 
 if __name__ == "__main__":
     unittest.main()

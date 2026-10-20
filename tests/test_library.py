@@ -5,6 +5,7 @@ import io
 import json
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 import time
@@ -579,6 +580,15 @@ class LibraryTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "preserved"):
             self.library.records()
         self.assertEqual(state.read_text(), '{"old-app": "not an object"}')
+
+    def test_finished_processes_are_reaped(self) -> None:
+        done = subprocess.Popen([sys.executable, "-c", "pass"])
+        done.wait()
+        running = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+        self.addCleanup(lambda: (running.kill(), running.wait()))
+        self.library.processes = {"done": done, "running": running}
+        self.library.reap_processes()
+        self.assertEqual(list(self.library.processes), ["running"])
 
     def test_refresh_keeps_a_working_shortcut_unless_a_newer_image_takes_over(self) -> None:
         old, new = Path(self.temp.name) / "old.AppImage", Path(self.temp.name) / "new.AppImage"
