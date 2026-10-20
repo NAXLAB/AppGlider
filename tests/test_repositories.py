@@ -14,7 +14,7 @@ from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QSettings, Qt, QTimer
+from PySide6.QtCore import QEvent, QSettings, Qt, QTimer
 from PySide6.QtGui import QPalette
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QMessageBox
@@ -211,6 +211,8 @@ class RepositoryGuiTests(unittest.TestCase):
         self.settings.setValue("appearance/theme", "Light")
         self.window = LauncherWindow(self.settings, self.library)
         self.window.show()
+        self.addCleanup(self.qt.sendPostedEvents, None, QEvent.Type.DeferredDelete)
+        self.addCleanup(self.window.deleteLater)
         self.addCleanup(self.close_window)
         self.dialog = RepositoriesDialog(self.library, self.window)
         self.dialog.catalog_changed.connect(self.window.scan_installed)
@@ -358,6 +360,7 @@ class RepositoryGuiTests(unittest.TestCase):
         reopened = LauncherWindow(
             self.settings, Library(self.library.data_dir, self.library.apps_dir)
         )
+        self.addCleanup(reopened.deleteLater)
         self.addCleanup(reopened.close)
         self.assertIn(CUSTOM.id, reopened.cards)
         self.assertEqual(reopened.tabs.tabText(0), "All apps")

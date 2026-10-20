@@ -12,7 +12,7 @@ from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QSettings, Qt, QTimer
+from PySide6.QtCore import QEvent, QSettings, Qt, QTimer
 from PySide6.QtGui import QCloseEvent, QImage, QPalette, QPixmap
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import (
@@ -63,6 +63,8 @@ class LibraryTests(unittest.TestCase):
         self.window = LauncherWindow(self.settings, library)
         self.window.show()
         self.qt.processEvents()
+        self.addCleanup(self.qt.sendPostedEvents, None, QEvent.Type.DeferredDelete)
+        self.addCleanup(self.window.deleteLater)
         self.addCleanup(self.window.close)
 
     def visible_ids(self) -> set[str]:
@@ -498,6 +500,7 @@ class LibraryTests(unittest.TestCase):
         self.assertEqual(card.installed_version.badge.text(), "Latest")
         self.assertTrue(card.app.include_prereleases)
         reopened = LauncherWindow(self.settings, self.window.library)
+        self.addCleanup(reopened.deleteLater)
         self.addCleanup(reopened.close)
         self.assertTrue(reopened.cards[APP.id].app.include_prereleases)
         self.assertEqual(reopened.cards[APP.id].findChildren(QComboBox), [])
