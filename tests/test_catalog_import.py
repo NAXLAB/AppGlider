@@ -1,9 +1,15 @@
+import io
 import json
 import tempfile
 import unittest
 from pathlib import Path
+from threading import Event
+from unittest.mock import patch
 
-from appglider.catalog import APPS, custom_app
+from catalog_fixture import APPS, STARTER_ENTRIES, stock
+from test_library import APP, appimage_bytes, ignore_progress, release_for
+
+from appglider.catalog import custom_app
 from appglider.catalogfile import CatalogEntry, parse, render
 from appglider.library import Library
 
@@ -45,6 +51,7 @@ class CatalogImportTests(unittest.TestCase):
         self.assertEqual(self.saved("build-preferences.json"), {two.id: "Two.AppImage"})
 
     def test_existing_apps_are_left_unchanged_and_reported(self) -> None:
+        stock(self.library)
         mine = custom_app("owner/mine", "My name", True, "Mine.AppImage")
         self.library.add_repository(mine)
         before = self.library.apps
@@ -64,18 +71,40 @@ class CatalogImportTests(unittest.TestCase):
         self.assertEqual(next(app for app in after if app.repo == "owner/mine"), mine)
 
     def test_nothing_new_writes_nothing(self) -> None:
+        stock(self.library)
+        path = self.library.data_dir / "repositories.json"
+        before = path.read_bytes()
         plan = self.library.import_catalog([CatalogEntry(APPS[0].repo, APPS[0].name)])
         self.assertEqual((plan.new, len(plan.existing)), ((), 1))
-        self.assertFalse((self.library.data_dir / "repositories.json").exists())
+        self.assertEqual(path.read_bytes(), before)
 
-    def test_import_respects_the_custom_repository_limit_without_partial_writes(self) -> None:
-        entries = [CatalogEntry(f"owner/app{i}", f"App {i}") for i in range(101)]
+    def test_import_respects_the_library_limit_without_partial_writes(self) -> None:
+        stock(self.library)
+        room = 100 - len(APPS)
+        entries = [CatalogEntry(f"owner/app{i}", f"App {i}") for i in range(room + 1)]
+        before = (self.library.data_dir / "repositories.json").read_bytes()
         with self.assertRaisesRegex(ValueError, "up to 100"):
             self.library.import_catalog(entries)
         self.assertEqual(self.library.apps, APPS)
-        self.assertFalse((self.library.data_dir / "repositories.json").exists())
-        self.library.import_catalog(entries[:100])
-        self.assertEqual(len(self.library.apps), len(APPS) + 100)
+        self.assertEqual((self.library.data_dir / "repositories.json").read_bytes(), before)
+        self.library.import_catalog(entries[:room])
+        self.assertEqual(len(self.library.apps), 100)
+
+    def test_installs_made_with_the_old_built_in_ids_match_again_after_importing(self) -> None:
+        stock(self.library)
+        data = appimage_bytes()
+        with patch("appglider.releases.request", return_value=io.BytesIO(data)):
+            self.library.install(APP, release_for("1.0.0", data), Event(), ignore_progress)
+        (self.library.data_dir / "repositories.json").unlink()  # as in a 0.4.0 library
+        fresh = Library(
+            self.library.data_dir, self.library.apps_dir, desktop_dir=self.library.desktop_dir
+        )
+        self.assertEqual(fresh.apps, ())
+        self.assertEqual(fresh.scan(), {})
+        self.assertEqual([orphan.app_id for orphan in fresh.orphans()], [APP.id])
+        fresh.import_catalog(STARTER_ENTRIES)
+        self.assertEqual(fresh.orphans(), [])
+        self.assertEqual(fresh.scan()[APP.id].version, "1.0.0")
 
     def test_invalid_entry_is_refused_before_anything_is_written(self) -> None:
         with self.assertRaises(ValueError):

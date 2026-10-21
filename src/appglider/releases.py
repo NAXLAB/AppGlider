@@ -79,10 +79,9 @@ def architecture() -> str:
 
 
 def stems(app: App) -> tuple[str, ...]:
-    if app.asset_stem:
-        return (app.asset_stem,)
+    stem = app.asset_stem or app.id
     former = {"pdfcraft": "printcraft", "solidcraft": "solvecraft"}
-    return (app.id, former[app.id]) if app.id in former else (app.id,)
+    return (stem, former[app.id]) if app.id in former else (stem,)
 
 
 def release_version(tag: object) -> str | None:

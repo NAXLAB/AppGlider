@@ -10,11 +10,12 @@ from pathlib import Path
 from threading import Event
 from unittest.mock import patch
 
+from catalog_fixture import APPS, stock
 from test_library import appimage_bytes, ignore_progress
 from test_releases import Response, public_assets
 
 from appglider import releases
-from appglider.catalog import APPS, custom_app
+from appglider.catalog import custom_app
 from appglider.library import Library
 from appglider.release_info import cached_info, discover_releases, info_path
 
@@ -56,7 +57,7 @@ class BuildTests(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
         self.cache = self.root / "cache"
-        self.library = Library(self.root / "data", self.root / "apps", self.root / "desktop")
+        self.library = stock(Library(self.root / "data", self.root / "apps", self.root / "desktop"))
         arch = patch.object(releases, "architecture", return_value="x86_64")
         arch.start()
         self.addCleanup(arch.stop)
@@ -214,7 +215,7 @@ class BuildTests(unittest.TestCase):
 
     def test_preferences_are_additive_persist_and_reject_corruption_without_data_loss(self):
         self.assertEqual(self.library.apps, APPS)
-        self.assertFalse(self.library.data_dir.exists())
+        self.assertFalse((self.library.data_dir / "build-preferences.json").exists())
         app = chosen_bambu()
         self.library.add_repository(app)
         repository_file = self.library.data_dir / "repositories.json"

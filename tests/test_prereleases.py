@@ -11,6 +11,7 @@ from pathlib import Path
 from threading import Event
 from unittest.mock import patch
 
+from catalog_fixture import stock
 from test_library import APP, appimage_bytes, ignore_progress
 from test_releases import Response, public_assets
 
@@ -65,7 +66,7 @@ class PrereleaseTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
-        self.library = Library(self.root / "data", self.root / "apps", self.root / "desktop")
+        self.library = stock(Library(self.root / "data", self.root / "apps", self.root / "desktop"))
         self.app = replace(APP, include_prereleases=True)
         self.arch = patch.object(releases, "architecture", return_value="x86_64")
         self.arch.start()
@@ -292,7 +293,7 @@ class PrereleaseTests(unittest.TestCase):
 
     def test_bad_preferences_are_preserved_and_rejected(self):
         path = self.library.data_dir / "release-preferences.json"
-        path.parent.mkdir()
+        path.parent.mkdir(exist_ok=True)
         contents = json.dumps({APP.id: "false"}).encode()
         path.write_bytes(contents)
         with self.assertRaisesRegex(ValueError, "preserved"):

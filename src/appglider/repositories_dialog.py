@@ -29,7 +29,7 @@ from PySide6.QtWidgets import (
 )
 
 from appglider import APP_ICON
-from appglider.catalog import APPS, App, custom_app
+from appglider.catalog import App, custom_app
 from appglider.catalogfile import CatalogError, ParsedCatalog, read, render
 from appglider.icons import (
     MAX_ICON_BYTES,
@@ -340,10 +340,9 @@ class RepositoriesDialog(QDialog):
         apps = self.library.apps
         self.repo_list.blockSignals(True)
         self.repo_list.clear()
-        builtin_ids = {app.id for app in APPS}
-        for app in sorted(apps, key=lambda app: (app.id in builtin_ids, app.name.casefold())):
+        for app in sorted(apps, key=lambda app: app.name.casefold()):
             item = QListWidgetItem(f"{app.name}\n{app.repo}")
-            item.setToolTip("Built-in application" if app.id in builtin_ids else app.source_url)
+            item.setToolTip(app.source_url)
             item.setIcon(QIcon(icon_pixmap(self.library.icon_path(app), 32)))
             item.setData(Qt.ItemDataRole.UserRole, app.id)
             self.repo_list.addItem(item)
@@ -353,9 +352,8 @@ class RepositoriesDialog(QDialog):
     def update_remove_button(self) -> None:
         item = self.repo_list.currentItem()
         app_id = item.data(Qt.ItemDataRole.UserRole) if item else None
-        custom = app_id is not None and app_id not in {app.id for app in APPS}
-        enabled = self.task is None and custom
-        self.remove_button.setVisible(not self.adding and custom)
+        enabled = self.task is None and app_id is not None
+        self.remove_button.setVisible(not self.adding and app_id is not None)
         self.remove_button.setEnabled(enabled)
         self.find_icons_button.setVisible(not self.adding)
         self.find_icons_button.setEnabled(
@@ -380,13 +378,13 @@ class RepositoriesDialog(QDialog):
         self.release_channel.blockSignals(True)
         self.release_channel.setCurrentIndex(int(bool(app and app.include_prereleases)))
         self.release_channel.blockSignals(False)
-        self.icon_target = app if app and app.asset_stem else None
+        self.icon_target = app
         self.detail_name.setText(app.name if app else "Select an application")
         self.detail_source.setText(app.repo if app else "")
         self.detail_note.setText(
             "Choose an icon for the library, tray and application menu."
             if self.icon_target
-            else "Included with AppGlider. This repository is managed by the built-in catalog."
+            else "Select an application to see its repository."
         )
         self.set_icon_options(())
         if self.icon_target:
@@ -399,10 +397,6 @@ class RepositoriesDialog(QDialog):
             else:
                 self.show_icon(path)
             self.status.setText("Repository, release and icon changes save immediately.")
-        elif app:
-            self.show_icon(app.icon)
-            self.icon_choices.setItemText(0, "Built-in icon")
-            self.status.setText("Built-in application icons are included with AppGlider.")
         self.set_busy(False)
 
     def start_add_repository(self) -> None:
@@ -443,7 +437,7 @@ class RepositoriesDialog(QDialog):
             self.status.setText(str(error))
             return
         self.selected_app = next(known for known in self.library.apps if known.id == app.id)
-        self.icon_target = self.selected_app if self.selected_app.asset_stem else None
+        self.icon_target = self.selected_app
         self.release = None
         self.release_preview.hide()
         self.status.setText(
@@ -615,7 +609,7 @@ class RepositoriesDialog(QDialog):
                 self.status.setText(f"Build preference could not be saved: {error}")
                 return
             self.selected_app = target
-            self.icon_target = target if target.asset_stem else None
+            self.icon_target = target
         if target is not None:
             remember_release(target, self.release, self.library.data_dir / "release-cache")
         self.version_label.set_version(

@@ -18,7 +18,6 @@ from threading import Event
 
 from appglider import APP_ICON
 from appglider.catalog import (
-    APPS,
     App,
     custom_app,
     default_description,
@@ -45,7 +44,7 @@ FREE_SPACE_MARGIN = 64 * 1024 * 1024
 MAX_LOG_BYTES = 5 * 1024 * 1024
 STALE_STAGE_SECONDS = 24 * 60 * 60
 LOCK_WAIT_SECONDS = 3.0
-MAX_CUSTOM_APPS = 100
+MAX_APPS = 100
 
 
 def desktop_exec(arguments: list[str]) -> str:
@@ -195,7 +194,7 @@ class Library:
 
     def icon_path(self, app: App) -> Path:
         path = self.data_dir / "icons" / f"{app.id}.png"
-        if app.asset_stem and not path.parent.is_symlink() and not path.is_symlink():
+        if not path.parent.is_symlink() and not path.is_symlink():
             try:
                 if path.stat().st_size <= MAX_ICON_BYTES:
                     with path.open("rb") as source:
@@ -208,8 +207,8 @@ class Library:
     def set_icon(self, app: App, data: bytes | None) -> None:
         png = normalise_icon(data if data is not None else APP_ICON.read_bytes())
         with self._lock():
-            if app not in self.apps[len(APPS) :]:
-                raise ValueError("Only added repositories can have a custom icon.")
+            if app not in self.apps:
+                raise ValueError("This repository is not in the library.")
             directory = self.data_dir / "icons"
             if directory.is_symlink():
                 raise ValueError("The icon folder is a symbolic link; it was left untouched.")
@@ -227,7 +226,7 @@ class Library:
             self.records()
             self._save_release_preference(app.id, app.include_prereleases)
             self._save_build_variant(app.id, app.build_variant)
-            self._save_repositories((*apps[len(APPS) :], app))
+            self._save_repositories((*apps, app))
 
     def plan_import(self, entries: Sequence[CatalogEntry]) -> ImportPlan:
         """Say which catalog entries would be added and which are already in the library."""
@@ -247,11 +246,10 @@ class Library:
         with self._lock():
             apps = self.apps
             plan = self.plan_import(entries)
-            custom = apps[len(APPS) :]
-            if len(custom) + len(plan.new) > MAX_CUSTOM_APPS:
+            if len(apps) + len(plan.new) > MAX_APPS:
                 raise ValueError(
-                    f"The catalog supports up to {MAX_CUSTOM_APPS} custom repositories; "
-                    f"this import would make {len(custom) + len(plan.new)}."
+                    f"The library supports up to {MAX_APPS} repositories; "
+                    f"this import would make {len(apps) + len(plan.new)}."
                 )
             added = tuple(
                 custom_app(
@@ -264,7 +262,7 @@ class Library:
                 for app in added:
                     self._save_release_preference(app.id, app.include_prereleases)
                     self._save_build_variant(app.id, app.build_variant)
-                self._save_repositories((*custom, *added))
+                self._save_repositories((*apps, *added))
             return plan
 
     def export_entries(self) -> tuple[CatalogEntry, ...]:
@@ -273,13 +271,13 @@ class Library:
     def remove_repository(self, app_id: str) -> None:
         with self._lock():
             apps = self.apps
-            if app_id not in {app.id for app in apps[len(APPS) :]}:
-                raise ValueError("Only custom repositories can be removed.")
+            if app_id not in {app.id for app in apps}:
+                raise ValueError("This repository is not in the library.")
             if app_id in self.records():
                 raise ValueError(
                     "Uninstall this application's managed copy before removing its repository."
                 )
-            self._save_repositories(tuple(app for app in apps[len(APPS) :] if app.id != app_id))
+            self._save_repositories(tuple(app for app in apps if app.id != app_id))
             # An orphan preference is harmless: adding this repository resets it.
             with contextlib.suppress(OSError):
                 self._save_release_preference(app_id, False)
@@ -291,8 +289,8 @@ class Library:
                     icon.unlink(missing_ok=True)
 
     def _save_repositories(self, apps: tuple[App, ...]) -> None:
-        if len(apps) > MAX_CUSTOM_APPS:
-            raise ValueError(f"The catalog supports up to {MAX_CUSTOM_APPS} custom repositories.")
+        if len(apps) > MAX_APPS:
+            raise ValueError(f"The library supports up to {MAX_APPS} repositories.")
         atomic_json(
             self.data_dir / "repositories.json",
             [

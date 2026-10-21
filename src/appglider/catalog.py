@@ -1,4 +1,4 @@
-"""Built-in applications and validated, locally saved GitHub repositories."""
+"""Validated, locally saved GitHub repositories."""
 
 import json
 import re
@@ -32,26 +32,24 @@ class App:
         return f"https://github.com/{self.repo}"
 
 
-APPS = (
-    App("photocraft", "PhotoCraft", "Image editing and photo composition", "storytold/photocraft"),
-    App("vectorcraft", "VectorCraft", "Vector illustration and graphics", "storytold/vectorcraft"),
-    App("filmcraft", "FilmCraft", "Video editing, colour and sound", "storytold/filmcraft"),
-    App(
-        "lightcraft", "LightCraft", "Photo organisation and RAW development", "storytold/lightcraft"
-    ),
-    App("pdfcraft", "PdfCraft", "Read, organise and work with PDFs", "storytold/pdfcraft"),
-    App(
-        "effectcraft", "EffectCraft", "Motion graphics and visual effects", "storytold/effectcraft"
-    ),
-    App("designcraft", "DesignCraft", "Page layout and publishing", "storytold/designcraft"),
-    App("figcraft", "FigCraft", "Interface design and prototyping", "storytold/figcraft"),
-    App("wordcraft", "WordCraft", "Writing and document design", "storytold/wordcraft"),
-    App("soundcraft", "SoundCraft", "Audio recording, editing and mixing", "storytold/soundcraft"),
-    App("deckcraft", "DeckCraft", "Presentations and slide decks", "storytold/deckcraft"),
-    App("cadcraft", "CADCraft", "Computer-aided design and drafting", "storytold/cadcraft"),
-    App("gridcraft", "GridCraft", "Spreadsheets and data", "storytold/gridcraft"),
-    App("solidcraft", "SolidCraft", "Parametric 3D modelling and CAD", "tangency-labs/solidcraft"),
-)
+# Repositories AppGlider has bundled icons for, with the id their installs have always used.
+# A catalog entry for one of these keeps that id, so existing installs and icons still match.
+KNOWN_IDS = {
+    "storytold/photocraft": "photocraft",
+    "storytold/vectorcraft": "vectorcraft",
+    "storytold/filmcraft": "filmcraft",
+    "storytold/lightcraft": "lightcraft",
+    "storytold/pdfcraft": "pdfcraft",
+    "storytold/effectcraft": "effectcraft",
+    "storytold/designcraft": "designcraft",
+    "storytold/figcraft": "figcraft",
+    "storytold/wordcraft": "wordcraft",
+    "storytold/soundcraft": "soundcraft",
+    "storytold/deckcraft": "deckcraft",
+    "storytold/cadcraft": "cadcraft",
+    "storytold/gridcraft": "gridcraft",
+    "tangency-labs/solidcraft": "solidcraft",
+}
 
 
 def default_description(repo: str) -> str:
@@ -104,7 +102,7 @@ def custom_app(
     if description and not valid_description(description):
         raise ValueError("Use a description of up to 200 plain characters.")
     return App(
-        f"github-{owner}__{slug}",
+        KNOWN_IDS.get(f"{owner}/{slug}", f"github-{owner}__{slug}"),
         title,
         description or default_description(f"{owner}/{slug}"),
         f"{owner}/{slug}",
@@ -177,14 +175,14 @@ def load_apps(
 
 def _load_apps(path: Path) -> tuple[App, ...]:
     if not path.exists():
-        return APPS
+        return ()
     try:
         if path.stat().st_size > 1024 * 1024:
             raise ValueError("The repository list is too large.")
         data = json.loads(path.read_text())
         if not isinstance(data, list) or len(data) > 100:
-            raise ValueError("Expected a list of up to 100 custom repositories.")
-        apps = list(APPS)
+            raise ValueError("Expected a list of up to 100 repositories.")
+        apps: list[App] = []
         for item in data:
             if (
                 not isinstance(item, dict)

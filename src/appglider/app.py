@@ -67,6 +67,7 @@ def main() -> int:
                         "appdir": os.environ.get("APPDIR"),
                         "installed": len(window.installed),
                         "catalog": len(window.apps),
+                        "welcome": window.welcome.isVisible(),
                         "icon": not window.windowIcon().isNull(),
                         "https_certificates": ssl.create_default_context().cert_store_stats()[
                             "x509_ca"

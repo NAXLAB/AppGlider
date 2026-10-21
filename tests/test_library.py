@@ -14,8 +14,9 @@ from pathlib import Path
 from threading import Event, Thread
 from unittest.mock import patch
 
+from catalog_fixture import APPS, stock
+
 from appglider import APP_ICON
-from appglider.catalog import APPS
 from appglider.library import Installed, Library, Orphan, check_appimage, desktop_exec
 from appglider.releases import (
     Cancelled,
@@ -62,10 +63,12 @@ class LibraryTests(unittest.TestCase):
         self.root = Path(self.temp.name)
         self.external = self.root / "external"
         self.external.mkdir()
-        self.library = Library(
-            self.root / "data",
-            self.root / "apps",
-            desktop_dir=self.root / "desktop",
+        self.library = stock(
+            Library(
+                self.root / "data",
+                self.root / "apps",
+                desktop_dir=self.root / "desktop",
+            )
         )
 
     def install(self, version: str):
@@ -83,7 +86,7 @@ class LibraryTests(unittest.TestCase):
         self.assertEqual(self.library.scan(), {})
         self.assertEqual(external.read_bytes(), appimage_bytes())
         self.assertEqual(loose.read_bytes(), appimage_bytes())
-        self.assertFalse(self.library.data_dir.exists())
+        self.assertFalse((self.library.data_dir / "library.json").exists())
 
     def test_legacy_external_link_is_ignored_and_does_not_block_own_install(self) -> None:
         location = self.external / "photocraft.AppImage"
@@ -199,7 +202,7 @@ class LibraryTests(unittest.TestCase):
         self.assertTrue(first.path.is_file())
 
     def test_corrupt_state_is_preserved_and_blocks_mutation(self) -> None:
-        self.library.data_dir.mkdir()
+        self.library.data_dir.mkdir(exist_ok=True)
         state = self.library.data_dir / "library.json"
         state.write_text("broken JSON")
         with self.assertRaisesRegex(ValueError, "preserved"):
@@ -468,7 +471,9 @@ class LibraryTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "Cannot read"):
                 self.library.apps
         atomic_json(repositories, [])
-        self.assertEqual(self.library.apps, tuple(APPS))
+        self.assertEqual(self.library.apps, ())
+        atomic_json(repositories, [{"repo": APP.repo, "name": APP.name}])
+        self.assertEqual(self.library.apps[0].repo, APP.repo)
         self.library.set_release_preference(APP.id, True)
         self.assertTrue(self.library.apps[0].include_prereleases)
 

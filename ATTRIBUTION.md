@@ -11,5 +11,5 @@ The source projects' MIT notices are distributed in `src/appglider/assets/licens
 | `assets/icons/solidcraft.png` | SolidCraft contributors; copied unmodified from [the SolidCraft repository](https://github.com/tangency-labs/solidcraft/blob/main/assets/icons/app/linux/exports/hicolor/128x128/apps/ai.storyteller.solidcraft.png). | MIT, selected from MIT OR Apache-2.0; `assets/licenses/solidcraft-MIT.txt` |
 
 Paths in this table are relative to `src/appglider/`. App names identify the managed
-projects and do not imply endorsement. The catalog's factual names and repository locations
+projects and do not imply endorsement. The example catalog's factual names and repository locations
 were checked against the upstream repositories; GUI implementation is original to this project.

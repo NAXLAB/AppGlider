@@ -14,7 +14,7 @@ feather's curve is copied, rotated and scaled for the other two, with real 12 pt
 between them because Qt's SVG renderer ignores masks.
 `src/appglider/assets/icons/appglider.png` is its 1024 px render. Qt renders the same PNG at
 the sizes required by the window, header, desktop shortcut and tray; no extra dependency is
-needed. The application catalog's upstream icons remain separate.
+needed. The bundled icons for the ArtCraft example catalog's apps remain separate.
 
 ## Application identity
 

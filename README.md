@@ -3,8 +3,9 @@
 <img src="src/appglider/assets/icons/appglider.png" alt="AppGlider icon" width="96">
 
 A Linux AppImage installer, updater and launcher, written in Python with PySide6.
-Manage the 13 ArtCraft applications, SolidCraft and supported projects from other public
-GitHub repositories in one place.
+Manage AppImages from public GitHub repositories in one place. AppGlider starts empty:
+add a repository, or import a catalog such as the
+[ArtCraft apps and SolidCraft example](docs/catalogs/artcraft.toml).
 
 AppGlider was previously named AppHarbour; it was renamed because that name was already
 in use. Versions up to 0.3.0 were released as AppHarbour, and 0.4.0 starts a fresh library

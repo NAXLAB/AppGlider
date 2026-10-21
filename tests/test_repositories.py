@@ -14,6 +14,7 @@ from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from catalog_fixture import APPS, stock
 from gui_helpers import close_window
 from PySide6.QtCore import QSettings, Qt, QTimer
 from PySide6.QtGui import QPalette
@@ -23,7 +24,7 @@ from test_builds import BAMBU, bambu_metadata, chosen_bambu
 from test_library import appimage_bytes
 
 from appglider import APP_ICON, releases
-from appglider.catalog import APPS, custom_app, load_apps
+from appglider.catalog import custom_app, load_apps
 from appglider.icons import IconCandidate, normalise_icon
 from appglider.jobs import TaskResult
 from appglider.library import Library
@@ -96,19 +97,36 @@ class CatalogTests(unittest.TestCase):
             with self.subTest(name=name), self.assertRaises(ValueError):
                 custom_app(CUSTOM.repo, name)
 
-    def test_catalog_persists_without_altering_builtin_catalog_or_library(self):
-        self.assertEqual(self.library.apps, APPS)
+    def test_catalog_persists_without_altering_the_library(self):
+        self.assertEqual(self.library.apps, ())
         self.assertFalse(self.library.data_dir.exists())
         self.library.add_repository(CUSTOM)
-        self.assertEqual(self.library.apps, (*APPS, CUSTOM))
+        self.assertEqual(self.library.apps, (CUSTOM,))
         reopened = Library(self.library.data_dir, self.library.apps_dir)
         self.assertEqual(reopened.apps[-1], CUSTOM)
         self.assertFalse((self.library.data_dir / "library.json").exists())
         self.assertEqual(len(APPS), 14)
         self.library.remove_repository(CUSTOM.id)
-        self.assertEqual(reopened.apps, APPS)
+        self.assertEqual(reopened.apps, ())
 
-    def test_duplicates_and_builtin_removal_are_rejected(self):
+    def test_known_repositories_keep_their_established_ids_and_icons(self):
+        self.assertEqual(
+            {app.id for app in APPS},
+            {
+                "photocraft", "vectorcraft", "filmcraft", "lightcraft", "pdfcraft",
+                "effectcraft", "designcraft", "figcraft", "wordcraft", "soundcraft",
+                "deckcraft", "cadcraft", "gridcraft", "solidcraft",
+            },
+        )  # fmt: skip
+        for app in APPS:
+            with self.subTest(app=app.id):
+                self.assertEqual(custom_app(app.repo).id, app.id)
+                self.assertNotEqual(self.library.icon_path(app), APP_ICON)
+        self.assertEqual(custom_app("someone/photocraft").id, "github-someone__photocraft")
+        self.assertEqual(self.library.icon_path(custom_app("someone/photocraft")), APP_ICON)
+
+    def test_duplicates_are_rejected_and_every_repository_can_be_removed(self):
+        stock(self.library)
         self.library.add_repository(CUSTOM)
         for app in (
             CUSTOM,
@@ -117,7 +135,9 @@ class CatalogTests(unittest.TestCase):
         ):
             with self.subTest(repo=app.repo), self.assertRaisesRegex(ValueError, "already"):
                 self.library.add_repository(app)
-        with self.assertRaisesRegex(ValueError, "Only custom"):
+        self.library.remove_repository(APPS[0].id)
+        self.assertNotIn(APPS[0].id, {app.id for app in self.library.apps})
+        with self.assertRaisesRegex(ValueError, "not in the library"):
             self.library.remove_repository(APPS[0].id)
         with self.assertRaisesRegex(ValueError, "Invalid"):
             self.library.add_repository(replace(CUSTOM, id="../../escape"))
@@ -167,7 +187,7 @@ class CatalogTests(unittest.TestCase):
         self.library.remove(CUSTOM)
         self.library.remove_repository(CUSTOM.id)
         self.assertEqual(reopened.scan(), {})
-        self.assertEqual(reopened.apps, APPS)
+        self.assertEqual(reopened.apps, ())
         self.assertFalse(shortcut.exists())
 
     def test_custom_filename_matching_is_separate_from_storage_id(self):
@@ -206,7 +226,7 @@ class RepositoryGuiTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
-        self.library = Library(self.root / "data", self.root / "apps", self.root / "desktop")
+        self.library = stock(Library(self.root / "data", self.root / "apps", self.root / "desktop"))
         self.settings = QSettings(str(self.root / "settings.ini"), QSettings.Format.IniFormat)
         icons = patch("appglider.repositories_dialog.discover_icons", return_value=())
         icons.start()
@@ -258,7 +278,6 @@ class RepositoryGuiTests(unittest.TestCase):
         self.assertIn("app 3: extra", text)
         self.assertTrue(preview.add_button.isEnabled())
         self.assertEqual(self.library.apps, APPS)
-        self.assertFalse((self.library.data_dir / "repositories.json").exists())
         self.run_import(path)
         self.assertEqual([app.repo for app in self.library.apps[len(APPS) :]], ["owner/one"])
         self.assertIn("Added 1 app", self.dialog.status.text())
@@ -349,8 +368,8 @@ class RepositoryGuiTests(unittest.TestCase):
     def test_repository_views_keep_addition_and_existing_app_actions_separate(self):
         self.assertTrue(self.dialog.details_page.isVisibleTo(self.dialog))
         self.assertFalse(self.dialog.add_page.isVisibleTo(self.dialog))
-        self.assertTrue(self.dialog.remove_button.isHidden())
-        self.assertTrue(self.dialog.icon_group.isHidden())
+        self.assertFalse(self.dialog.remove_button.isHidden())
+        self.assertFalse(self.dialog.icon_group.isHidden())
         QTest.mouseClick(self.dialog.new_repository_button, Qt.MouseButton.LeftButton)
         self.assertTrue(self.dialog.add_page.isVisibleTo(self.dialog))
         self.assertTrue(self.dialog.release_preview.isHidden())
@@ -482,7 +501,7 @@ class RepositoryGuiTests(unittest.TestCase):
             self.wait_for_task(self.dialog)
         self.assertIn("No published SHA-256", self.dialog.status.text())
         self.assertFalse(self.dialog.add_button.isEnabled())
-        self.assertFalse((self.library.data_dir / "repositories.json").exists())
+        self.assertEqual(self.library.apps, APPS)
 
     def test_discovered_icon_preview_selection_persistence_and_shortcuts(self):
         first = normalise_icon(
@@ -998,14 +1017,14 @@ class RepositoryGuiTests(unittest.TestCase):
         self.assertNotIn(CUSTOM.id, self.window.releases)
         self.assertFalse(self.window.cards[CUSTOM.id].app.include_prereleases)
 
-    def test_builtin_preferences_save_without_enabling_custom_icon_actions(self):
+    def test_release_preference_saves_for_an_example_catalog_app(self):
         selected = self.dialog.selected_app
         self.assertIn(selected.id, {app.id for app in APPS})
         self.dialog.release_channel.setCurrentIndex(1)
         self.assertTrue(self.window.cards[selected.id].app.include_prereleases)
-        self.assertIsNone(self.dialog.icon_target)
-        self.assertTrue(self.dialog.remove_button.isHidden())
-        self.assertTrue(self.dialog.icon_group.isHidden())
+        self.assertEqual(self.dialog.icon_target.id, selected.id)
+        self.assertFalse(self.dialog.remove_button.isHidden())
+        self.assertFalse(self.dialog.icon_group.isHidden())
         with patch("appglider.repositories_dialog.latest_release", return_value=custom_release()):
             self.dialog.inspect_repository()
             self.wait_for_task(self.dialog)

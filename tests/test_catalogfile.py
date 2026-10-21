@@ -3,7 +3,9 @@ import tomllib
 import unittest
 from pathlib import Path
 
-from appglider.catalog import APPS, custom_app
+from catalog_fixture import APPS
+
+from appglider.catalog import custom_app
 from appglider.catalogfile import (
     MAX_APPS,
     MAX_BYTES,

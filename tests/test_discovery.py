@@ -10,11 +10,12 @@ from threading import Event
 from unittest.mock import patch
 from urllib.parse import quote
 
+from catalog_fixture import APPS
 from test_library import APP, appimage_bytes, release_for
 from test_releases import Response, public_assets
 
 from appglider import releases
-from appglider.catalog import APPS, custom_app
+from appglider.catalog import custom_app
 from appglider.storage import atomic_json
 
 

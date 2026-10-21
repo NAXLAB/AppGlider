@@ -2,7 +2,8 @@
 
 ## Library
 
-Use **All apps** to browse the catalog, **Installed (N)** for managed installations and
+A new library is empty. Choose **+ Add app** or **Import catalog…** (see below) to fill it.
+Use **All apps** to browse your repositories, **Installed (N)** for managed installations and
 **Updates (N)** for known updates. Counts show full library totals independently of search.
 Search matches application names, descriptions and repository names.
 
@@ -59,7 +60,7 @@ launching the replacement; it does not currently update itself.
 
 Stable releases are the default. Use **⋯ → Application preferences…** on a card, or
 **Settings → Applications → Repositories…**, to include previews for that application. It applies to
-built-in apps and added repositories, survives restarts and is used by future updates.
+every app in your library, survives restarts and is used by future updates.
 **Check available release** previews the choice without installing anything.
 
 **Stable + previews** (called **Stable and prerelease versions** in repository management)
@@ -108,16 +109,18 @@ The release and icon options appear after inspection.
 Adding the repository creates a card; it does not install the app.
 Repository, icon and release preference changes are saved immediately, independently of
 Settings' Save/Cancel buttons.
-Uninstall a custom app before removing its repository from the catalog.
+Uninstall an app before removing its repository from the library.
 
 Inspection also looks for application icons in the repository. Preview the discovered
 candidates and choose one from the icon list, or use **Choose icon…** to select a local
 PNG or self-contained SVG. Adding the repository saves the selected image locally.
 
-To change an existing custom entry's icon, select it in the repository list and use
+To change an existing entry's icon, select it in the repository list and use
 **Find icons** or **Choose icon…**. These icon changes save immediately. The selected icon
 appears on its card, details, tray entry and managed-app menu shortcut, and stays available
-offline. Built-in application icons remain bundled with AppGlider.
+offline. Icons for the apps in the ArtCraft example catalog are bundled with AppGlider, so
+those apps show their own icon before you choose one; other imported apps show the AppGlider
+icon until you do.
 
 Icons are limited to 2 MiB and 4096 pixels per side, then converted to a PNG of at most
 512 pixels per side. SVGs with external resources or document types are rejected.
@@ -200,8 +203,9 @@ ArtCraft apps and SolidCraft; download it and choose **Import catalog…**.
 - A file that is not valid TOML, has no `format = 1`, is larger than 256 KiB or lists more
   than 100 apps imports nothing. Together with your other added repositories the library
   holds at most 100.
-- Icons are not stored in a catalog. Imported apps show the AppGlider icon until you select
-  one and choose **Find icons**.
+- Icons are not stored in a catalog. Apps from the example catalog use the icons bundled
+  with AppGlider; other imported apps show the AppGlider icon until you select one and
+  choose **Find icons**.
 - Names and descriptions are shown as plain text, never as formatted text or links.
 
 ## Settings and desktop integration
@@ -232,8 +236,9 @@ runs do not repoint a working entry.
 Only one AppGlider window runs per user. Starting it again raises the existing window and
 exits.
 
-If `library.json` contains entries for applications that are not in the current catalog
-(for example a removed repository), they are kept untouched and a footer button
+If `library.json` contains entries for applications that are not in your repository list
+(for example a removed repository, or apps installed before you imported the example catalog),
+they are kept untouched and a footer button
 **Review N unrecognised entries…** appears. Tick entries to forget them; nothing is
 forgotten unless you confirm, and files on disk are never deleted. Unreadable or malformed
 library files are still preserved and reported.

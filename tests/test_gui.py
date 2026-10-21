@@ -12,6 +12,7 @@ from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from catalog_fixture import APPS, STARTER_ENTRIES, stock
 from gui_helpers import close_window
 from PySide6.QtCore import QCoreApplication, QEvent, QSettings, Qt, QTimer
 from PySide6.QtGui import QCloseEvent, QImage, QPalette, QPixmap
@@ -33,7 +34,7 @@ from PySide6.QtWidgets import (
 from test_library import APP, appimage_bytes, release_for
 
 from appglider import APP_ICON, APP_VERSION, github_status, releases
-from appglider.catalog import APPS, custom_app
+from appglider.catalog import custom_app
 from appglider.jobs import TaskResult
 from appglider.library import Installed, Library
 from appglider.release_info import ReleaseInfo, ReleaseOption, info_path
@@ -57,10 +58,12 @@ class LibraryTests(unittest.TestCase):
             str(Path(self.temp.name) / "settings.ini"), QSettings.Format.IniFormat
         )
         self.settings.setValue("appearance/theme", "Light")
-        library = Library(
-            Path(self.temp.name) / "data",
-            Path(self.temp.name) / "apps",
-            desktop_dir=Path(self.temp.name) / "desktop",
+        library = stock(
+            Library(
+                Path(self.temp.name) / "data",
+                Path(self.temp.name) / "apps",
+                desktop_dir=Path(self.temp.name) / "desktop",
+            )
         )
         self.window = LauncherWindow(self.settings, library)
         self.window.show()
@@ -69,6 +72,45 @@ class LibraryTests(unittest.TestCase):
 
     def visible_ids(self) -> set[str]:
         return {app_id for app_id, card in self.window.cards.items() if card.isVisible()}
+
+    def test_empty_library_shows_a_welcome_with_add_and_import(self) -> None:
+        root = Path(self.temp.name) / "empty"
+        library = Library(root / "data", root / "apps", desktop_dir=root / "desktop")
+        window = LauncherWindow(self.settings, library)
+        self.addCleanup(close_window, window)
+        window.show()
+        window.scan_installed()
+        self.qt.processEvents()
+        self.assertEqual(window.apps, ())
+        self.assertTrue(window.welcome.isVisibleTo(window))
+        self.assertTrue(window.scroll_area.isHidden())
+        self.assertTrue(window.empty.isHidden())
+        self.assertEqual(window.results.text(), "No apps yet")
+
+        def close_dialog(observed: list[bool]) -> None:
+            active = self.qt.activeModalWidget()
+            if isinstance(active, RepositoriesDialog):
+                observed.append(active.adding)
+                active.reject()
+
+        observed: list[bool] = []
+        QTimer.singleShot(0, lambda: close_dialog(observed))
+        window.welcome_add_button.click()
+        self.assertEqual(observed, [True])
+
+        opened: list[bool] = []
+        with patch.object(RepositoriesDialog, "import_catalog", autospec=True) as importer:
+            QTimer.singleShot(50, lambda: close_dialog(opened))
+            window.welcome_import_button.click()
+        importer.assert_called_once()
+        self.assertEqual(opened, [False])
+
+        library.import_catalog(STARTER_ENTRIES[:2])
+        window.scan_installed()
+        self.qt.processEvents()
+        self.assertTrue(window.welcome.isHidden())
+        self.assertFalse(window.scroll_area.isHidden())
+        self.assertEqual(window.results.text(), "2 apps · AppImage catalog")
 
     def test_appglider_identity_and_icon(self) -> None:
         self.assertEqual(self.window.windowTitle(), "AppGlider")

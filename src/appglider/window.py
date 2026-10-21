@@ -57,7 +57,7 @@ from PySide6.QtWidgets import (
 )
 
 from appglider import APP_ICON, APP_NAME, APP_VERSION, github_status
-from appglider.catalog import APPS, App
+from appglider.catalog import App
 from appglider.icons import icon_pixmap
 from appglider.jobs import Task, TaskResult
 from appglider.library import Installed, Library, Orphan
@@ -732,7 +732,7 @@ class LauncherWindow(QMainWindow):
             )
         )
         self.installed: dict[str, Installed] = {}
-        self.apps: tuple[App, ...] = APPS
+        self.apps: tuple[App, ...] = ()
         self.releases: dict[str, Release] = {}
         self.check_errors: dict[str, str] = {}
         self.release_infos: dict[str, ReleaseInfo] = {}
@@ -830,6 +830,38 @@ class LauncherWindow(QMainWindow):
         self.empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.empty.setWordWrap(True)
         layout.addWidget(self.empty, stretch=1)
+        self.welcome = QWidget()
+        welcome_layout = QVBoxLayout(self.welcome)
+        welcome_layout.setSpacing(16)
+        welcome_layout.setContentsMargins(120, 0, 120, 0)
+        welcome_layout.addStretch()
+        welcome_title = QLabel("Welcome to AppGlider")
+        welcome_title.setObjectName("pageTitle")
+        welcome_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        welcome_layout.addWidget(welcome_title)
+        welcome_text = QLabel(
+            "Your library is empty. Add an app from a public GitHub repository, or import a "
+            "catalog: a plain-text list of repositories you can read before adding it."
+        )
+        welcome_text.setObjectName("emptyState")
+        welcome_text.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        welcome_text.setWordWrap(True)
+        welcome_layout.addWidget(welcome_text)
+        welcome_buttons = QHBoxLayout()
+        welcome_buttons.addStretch()
+        self.welcome_add_button = QPushButton("+ Add app")
+        self.welcome_add_button.setObjectName("primary")
+        self.welcome_add_button.clicked.connect(lambda: self.open_repositories(adding=True))
+        welcome_buttons.addWidget(self.welcome_add_button)
+        self.welcome_import_button = QPushButton("Import catalog…")
+        self.welcome_import_button.clicked.connect(
+            lambda: self.open_repositories(import_catalog=True)
+        )
+        welcome_buttons.addWidget(self.welcome_import_button)
+        welcome_buttons.addStretch()
+        welcome_layout.addLayout(welcome_buttons)
+        welcome_layout.addStretch()
+        layout.addWidget(self.welcome, stretch=1)
         self.footer = QLabel("Loading your library…")
         self.footer.setObjectName("footer")
         self.footer.setTextFormat(Qt.TextFormat.PlainText)
@@ -857,7 +889,7 @@ class LauncherWindow(QMainWindow):
         progress_row.addWidget(self.github_button)
         progress_row.addWidget(self.version_button)
         layout.addLayout(progress_row)
-        self.cards = {app.id: self.create_card(app) for app in self.apps}
+        self.cards: dict[str, AppCard] = {}
         self.search.textChanged.connect(self.refresh)
         self.tabs.currentChanged.connect(self.refresh)
         QApplication.styleHints().colorSchemeChanged.connect(self.apply_theme)
@@ -989,9 +1021,14 @@ class LauncherWindow(QMainWindow):
             [self.cards[app.id] for app in visible], self.scroll_area.viewport().width()
         )
         self.scroll_area.setVisible(bool(visible))
-        self.empty.setVisible(not visible)
+        self.empty.setVisible(not visible and bool(self.apps))
+        self.welcome.setVisible(not self.apps)
+        self.welcome_add_button.setEnabled(self.task is None)
+        self.welcome_import_button.setEnabled(self.task is None)
         self.results.setText(
-            f"{len(visible)} of {len(self.apps)} apps"
+            "No apps yet"
+            if not self.apps
+            else f"{len(visible)} of {len(self.apps)} apps"
             if query
             else f"{len(visible)} apps · AppImage catalog"
         )
@@ -1001,7 +1038,7 @@ class LauncherWindow(QMainWindow):
             )
         elif self.tabs.currentIndex() == 1:
             self.empty.setText(
-                "Your library is empty.\nChoose Install from All apps to get started."
+                "No apps are installed.\nChoose Install from All apps to get started."
             )
         elif self.tabs.currentIndex() == 2:
             self.empty.setText(
@@ -1076,7 +1113,12 @@ class LauncherWindow(QMainWindow):
         dialog.deleteLater()
 
     def open_repositories(
-        self, adding: bool = False, app_id: str | None = None, *, choose_build: bool = False
+        self,
+        adding: bool = False,
+        app_id: str | None = None,
+        *,
+        choose_build: bool = False,
+        import_catalog: bool = False,
     ) -> None:
         if self.task is not None:
             return
@@ -1095,6 +1137,8 @@ class LauncherWindow(QMainWindow):
                     break
             if choose_build:
                 dialog.choose_build()
+        if import_catalog:
+            QTimer.singleShot(0, dialog.import_catalog)
         dialog.exec()
 
     def has_update(self, app_id: str) -> bool:

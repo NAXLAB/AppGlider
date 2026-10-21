@@ -12,12 +12,13 @@ from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from catalog_fixture import stock
 from PySide6.QtCore import QBuffer, QIODevice
 from PySide6.QtGui import QImage
 from PySide6.QtWidgets import QApplication
 
 from appglider import APP_ICON
-from appglider.catalog import APPS, custom_app
+from appglider.catalog import custom_app
 from appglider.icons import MAX_ICON_BYTES, discover_icons, icon_pixmap, normalise_icon
 from appglider.library import Library
 from appglider.releases import Cancelled, RateLimited
@@ -38,7 +39,7 @@ class IconTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
-        self.library = Library(self.root / "data", self.root / "apps", self.root / "desktop")
+        self.library = stock(Library(self.root / "data", self.root / "apps", self.root / "desktop"))
 
     def test_png_and_svg_are_normalised_to_bounded_png(self):
         for data in (SVG, APP_ICON.read_bytes()):
@@ -190,10 +191,9 @@ class IconTests(unittest.TestCase):
         self.library.remove_repository(CUSTOM.id)
         self.assertFalse(path.exists())
 
-    def test_builtin_unknown_and_symlinked_icon_locations_are_preserved(self):
-        for app in (APPS[0], CUSTOM):
-            with self.assertRaisesRegex(ValueError, "Only added"):
-                self.library.set_icon(app, SVG)
+    def test_unknown_and_symlinked_icon_locations_are_preserved(self):
+        with self.assertRaisesRegex(ValueError, "not in the library"):
+            self.library.set_icon(CUSTOM, SVG)
         self.library.add_repository(CUSTOM)
         external = self.root / "external"
         external.mkdir()
