@@ -5,9 +5,9 @@ order. Designs may change after discussion.
 
 ## Planned
 
-- **Import/export catalogs:** back up, share or publish a list of repositories as a
-  plain-text TOML file that anyone can read and write by hand. See
-  [Catalogs and an empty first run](#catalogs-and-an-empty-first-run--design-discussion).
+- **Empty first run:** start with an empty library and an **Import catalog…** button, with
+  the ArtCraft apps and SolidCraft offered through the example catalog instead of being
+  built in. See [Catalogs and an empty first run](#catalogs-and-an-empty-first-run--design-discussion).
 - **Installation queue:** queue multiple installs or updates with clear progress and
   cancellation controls.
 - **AppGlider updates:** check for launcher updates, show release notes and offer an
@@ -16,6 +16,10 @@ order. Designs may change after discussion.
   rollback versions, with controls for removing an unwanted rollback copy.
 
 ## Completed
+
+- **Import/export catalogs:** import and export plain-text TOML catalogs from the
+  Repositories dialog, with a preview before anything is added. An example for the ArtCraft
+  apps and SolidCraft is in `docs/catalogs/`. See the [usage guide](usage.md#import-and-export-catalogs).
 
 - **GitHub request status:** a footer indicator and details in Settings show the last
   reported API allowance, retry times, the most recent release-information source and
@@ -41,39 +45,23 @@ tray icons. The tooltip already reports the update count.
 
 ## Catalogs and an empty first run — design discussion
 
-Proposed: AppGlider starts with an empty library and no built-in vendor list. Today the
+Catalog import and export are built (see Completed). What remains is proposed: AppGlider
+starts with an empty library and no built-in vendor list. Today the
 13 ArtCraft applications and SolidCraft are built in, which makes AppGlider look like a
 launcher for one product family. The first window would offer **+ Add app** and
 **Import catalog…**, and the ArtCraft apps would become an example catalog file instead.
 
-Proposed catalog format: a TOML file, read with the standard library's `tomllib`, so a
-reader can see exactly what an import adds and a text editor is enough to write one.
-Sketch (repository URL is a placeholder):
+Remaining design points:
 
-```toml
-format = 1
-name = "My starter catalog"
-
-[[app]]
-name = "Example App"
-repo = "https://github.com/owner/project"
-stable_only = true
-```
-
-Design points to settle before implementation:
-
-- Import shows a preview before merging ("adds 14 apps, 2 already exist"). It adds
-  definitions only; nothing installs automatically.
-- Apply the existing repository checks to every entry (GitHub only, the redirect and
-  filename rules) and bound file size and app count. Reject an unknown `format`; ignore
-  and report unknown keys. Start without importing from a URL.
-- Catalogs hold definitions, not icons. Confirm that discovered repository icons, stored
-  offline, are enough for the ArtCraft apps, which have bundled icons today.
-- Confirm that a custom repository gets everything a built-in app gets: release
-  preferences, build choices and icons. Tests that use the built-in list would need a
+- Imported apps show the generic icon until **Find icons** runs, and icon discovery needs
+  at least two GitHub requests per app, so it must not run for many apps at once
+  (unauthenticated GitHub allows 60 requests an hour). Proposed: keep a small bundled set
+  of icons, looked up by repository, as a fallback for the example catalog's apps.
+- Custom repositories were checked against the built-in apps for the latest release of
+  PhotoCraft, PdfCraft and SolidCraft (same release and asset). Older releases and the
+  other apps are unchecked.
+- Removing the built-in list means every app becomes removable, the built-in/custom split
+  in the library and dialogs goes away, and the tests that use the built-in list need a
   fixture catalog.
-- Writing a catalog needs only a small writer for strings, booleans and a list of tables;
-  check it by round-tripping through `tomllib`. No new dependency.
-- Publish the ArtCraft and SolidCraft example in the repository and attach it to each
-  release; optionally ship a copy for an offline **Import starter catalog** action.
-- Treat this as a feature after the 0.4.0 rename release.
+- Attach the example catalog to each release, and optionally ship a copy for an offline
+  **Import starter catalog** action.

@@ -168,6 +168,42 @@ rules. A separate checksum file is unnecessary when GitHub publishes the digest.
 If GitHub changes the page format or no checksum can be obtained, discovery stops with
 an explanation. No GitHub token is needed.
 
+## Import and export catalogs
+
+A catalog is a plain-text [TOML](https://toml.io) file listing GitHub repositories. Open
+**Settings → Applications → Repositories…** and use **Import catalog…** and
+**Export catalog…** at the bottom of the dialog. Because it is ordinary text, you can read
+a catalog before importing it and write your own in any text editor.
+
+```toml
+# comments are allowed
+format = 1
+name = "My catalog"
+
+[[app]]
+repo = "owner/project"            # required: owner/repo or https://github.com/owner/repo
+name = "Project"                  # optional: defaults to the repository name
+description = "What it does"      # optional, plain text, up to 200 characters
+stable_only = true                # optional, default true; false includes previews
+build = "Project-x86_64.AppImage" # optional: exact AppImage filename to prefer
+```
+
+A ready-made example is [`catalogs/artcraft.toml`](catalogs/artcraft.toml), listing the
+ArtCraft apps and SolidCraft; download it and choose **Import catalog…**.
+
+- Importing shows a preview first and adds repository definitions only. Nothing is
+  downloaded or installed, and no network request is made.
+- Repositories already in your library are left exactly as they are; a catalog never
+  overwrites a name, release choice or build you set.
+- Entries that are not valid (for example a non-GitHub address) are listed and skipped;
+  the rest can still be imported. Keys AppGlider does not know are ignored and listed.
+- A file that is not valid TOML, has no `format = 1`, is larger than 256 KiB or lists more
+  than 100 apps imports nothing. Together with your other added repositories the library
+  holds at most 100.
+- Icons are not stored in a catalog. Imported apps show the AppGlider icon until you select
+  one and choose **Find icons**.
+- Names and descriptions are shown as plain text, never as formatted text or links.
+
 ## Settings and desktop integration
 
 Settings has General, Applications, Storage and About sections.
