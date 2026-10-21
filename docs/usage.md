@@ -30,7 +30,8 @@ This explicit check bypasses the request cache. Adding a repository still inspec
 release and published checksum before adding the card. With no installed apps, startup
 makes no release requests and the main and tray refresh actions are disabled.
 
-**⋯ → Uninstall…** removes AppGlider-owned AppImages and their shortcut. Documents and
+**⋯ → Uninstall…** removes AppGlider-owned AppImages and their shortcut, plus any other
+menu entry that launches one of the removed AppImages (see below). Documents and
 the application's own settings are preserved. An application cannot be uninstalled while
 its managed version is running.
 
@@ -178,6 +179,13 @@ Changing the folder leaves existing installations in place; their updates stay w
 AppGlider creates its own menu entry. Managed apps get entries such as
 **PhotoCraft (AppGlider)**. Updates reuse the existing entry, and
 **⋯ → Create/repair menu shortcut** restores a missing managed-app shortcut.
+
+Some applications also add their own menu entry the first time they run, named without
+"(AppGlider)" (for example `ai.storyteller.solidcraft.desktop`). AppGlider does not create
+or edit these, so such an app can appear twice in the menu; the "(AppGlider)" entry is
+the managed one. Uninstalling the app removes any entry in your applications folder whose
+command is one of the removed AppImages, so no broken entry is left behind. Entries for
+other programs are untouched.
 
 The AppGlider entry itself (`appglider.desktop`) is rewritten only when it is missing,
 when its target no longer exists, or when a newer packaged AppImage takes over. Development

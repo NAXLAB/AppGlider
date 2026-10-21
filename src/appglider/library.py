@@ -708,10 +708,34 @@ class Library:
                     shortcut.unlink()
             except OSError as error:
                 errors.append(f"{shortcut}: {error}")
+            errors.extend(self._remove_dangling_shortcuts(paths))
             if errors:
                 raise OSError(
                     f"{app.name} was uninstalled, but cleanup failed: " + "; ".join(errors)
                 )
+
+    def _remove_dangling_shortcuts(self, removed: list[Path]) -> list[str]:
+        """Delete menu entries, such as an app's own, that launch a removed AppImage."""
+        targets = {str(path) for path in removed}
+        errors: list[str] = []
+        try:
+            entries = sorted(self.desktop_dir.glob("*.desktop"))
+        except OSError:
+            return errors
+        for entry in entries:
+            try:
+                if entry.is_symlink() or not entry.is_file():
+                    continue
+                lines = entry.read_text().splitlines()
+                command = next(shlex.split(line[5:]) for line in lines if line.startswith("Exec="))
+            except (OSError, ValueError, StopIteration):
+                continue
+            if command and command[0] in targets:
+                try:
+                    entry.unlink()
+                except OSError as error:
+                    errors.append(f"{entry}: {error}")
+        return errors
 
     def create_shortcut(self, app: App) -> None:
         with self._lock():

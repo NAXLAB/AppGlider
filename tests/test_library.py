@@ -679,6 +679,27 @@ class LibraryTests(unittest.TestCase):
         self.assertEqual(own.read_text(), contents)
         self.assertIn("another installer", original.read_text())
 
+    def test_uninstall_removes_only_menu_entries_that_launch_the_removed_appimage(self) -> None:
+        first = self.install("1.0.0")
+        second = self.install("1.1.0")
+        directory = self.library.desktop_dir
+
+        def entry(name: str, exec_line: str) -> Path:
+            path = directory / name
+            path.write_text(f"[Desktop Entry]\nName={name}\n{exec_line}\n")
+            return path
+
+        own_app = entry("ai.storyteller.photocraft.desktop", f'Exec="{second.path}" %F')
+        old_version = entry("old-version.desktop", f"Exec={first.path} %U")
+        other_app = entry("other.desktop", 'Exec="/usr/bin/other" %F')
+        no_command = entry("none.desktop", "Terminal=false")
+        broken = entry("broken.desktop", 'Exec="unterminated')
+        self.library.remove(APP)
+        self.assertFalse(own_app.exists())
+        self.assertFalse(old_version.exists())
+        for kept in (other_app, no_command, broken):
+            self.assertTrue(kept.exists())
+
     def test_shortcut_repair_preserves_existing_and_dangling_symlink_targets(self) -> None:
         self.install("1.0.0")
         shortcut = self.library.desktop_dir / f"appglider-{APP.id}.desktop"
