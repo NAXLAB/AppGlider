@@ -91,10 +91,9 @@ Updates: 2").
 
 GitHub lets programs make about 60 anonymous requests an hour. AppGlider is careful with
 them: to find out whether an app you have installed has a newer version, it first looks at
-the app's ordinary GitHub release page, which does not use up that allowance. It only uses
-the allowance when a new version has really appeared, or when you install, add or inspect an
-app. The exception is apps that have previews turned on, which still use some requests on
-every check. AppGlider skips scheduled checks when GitHub says few requests are left. The
+the app's ordinary GitHub release page (or, for apps with previews turned on, its public
+release feed), which does not use up that allowance. It only uses the allowance when a new
+version has really appeared, or when you install, add or inspect an app. AppGlider skips scheduled checks when GitHub says few requests are left. The
 **GitHub** label at the bottom of the window shows how many remain. No GitHub account or
 token is needed.
 

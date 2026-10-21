@@ -235,22 +235,19 @@ class ReleaseInfoTests(unittest.TestCase):
         self.entries = [self.beta, self.stable]
         self.discover()  # back to 1.2.3 for the checks below
 
-    def test_cheap_check_is_skipped_without_saved_information_for_previews_or_when_not_asked(self):
+    def test_cheap_check_is_skipped_without_saved_information_or_when_not_asked(self):
         info, latest, api = self.cheap("v1.2.3")  # nothing saved yet
         latest.assert_not_called()
         api.assert_called_once()
         with (
             patch.object(releases, "latest_tag", return_value="v1.2.3") as latest,
+            patch.object(releases, "feed_tags") as feed,
             patch.object(releases, "api_entries", return_value=self.entries) as api,
         ):
-            discover_releases(
-                replace(APP, include_prereleases=True), Event(), self.cache, force=True, cheap=True
-            )
-            latest.assert_not_called()
-            api.assert_called_once()
             api.reset_mock()
             discover_releases(APP, Event(), self.cache, force=True)  # not asked to be cheap
             latest.assert_not_called()
+            feed.assert_not_called()
             api.assert_called_once()
 
     def test_a_fresh_cache_needs_no_request_at_all_even_when_cheap(self):
@@ -262,6 +259,152 @@ class ReleaseInfoTests(unittest.TestCase):
             discover_releases(APP, Event(), self.cache, cheap=True)
         latest.assert_not_called()
         api.assert_not_called()
+
+    def with_previews(self, tags):
+        app = replace(APP, include_prereleases=True)
+        with (
+            patch.object(releases, "feed_tags", return_value=tags) as feed,
+            patch.object(releases, "latest_tag") as latest,
+            patch.object(releases, "api_entries", return_value=self.entries) as api,
+        ):
+            info = discover_releases(app, Event(), self.cache, force=True, cheap=True)
+        latest.assert_not_called()  # previews never use the Latest page
+        return info, feed, api
+
+    def test_apps_with_previews_use_the_feed_and_skip_the_api_when_nothing_is_newer(self):
+        first = self.discover()  # knows 1.2.3 and 1.3.0-beta.10
+        time.sleep(0.01)
+        for tags in (["v1.3.0-beta.10", "v1.2.3"], ["v1.2.3"], ["v1.3.0-beta.2", "v1.2.0"]):
+            with self.subTest(tags=tags):
+                info, feed, api = self.with_previews(tags)
+                feed.assert_called_once()
+                api.assert_not_called()
+                self.assertEqual((info.stable, info.preview), (first.stable, first.preview))
+                self.assertGreater(info.checked_at, first.checked_at)
+                self.assertEqual(github_status._status.source, "GitHub release feed")
+
+    def test_apps_with_previews_ask_the_api_when_the_feed_shows_something_newer_or_unclear(self):
+        self.discover()
+        newer = {**metadata("1.3.0-beta.11", True)}
+        for tags in (["v1.3.0-beta.11", "v1.2.3"], ["v1.3.0"], None, [], ["nightly"]):
+            with self.subTest(tags=tags):
+                self.entries = [newer, self.stable]
+                info, _, api = self.with_previews(tags)
+                api.assert_called_once()
+                self.assertEqual(info.preview.version, "1.3.0-beta.11")
+                self.entries = [self.beta, self.stable]
+                self.discover()
+
+    def test_the_feed_is_not_used_without_saved_information(self):
+        info, feed, api = self.with_previews(["v1.2.3"])
+        feed.assert_not_called()
+        api.assert_called_once()
+
+
+class FeedTests(unittest.TestCase):
+    ATOM = """<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <link type="text/html" rel="alternate" href="https://github.com/owner/repo/releases"/>
+  <entry>
+    <id>tag:github.com,2008:Repository/1/v1.3.0-beta.1</id>
+    <link rel="alternate" type="text/html" href="https://github.com/Owner/Repo/releases/tag/v1.3.0-beta.1"/>
+    <content type="html">&lt;a href="https://github.com/owner/repo/releases/tag/v9.9.9"&gt;spoof&lt;/a&gt;</content>
+  </entry>
+  <entry>
+    <link rel="alternate" type="text/html" href="https://github.com/owner/repo/releases/tag/app%2Fv1.2.3"/>
+  </entry>
+  <entry>
+    <link rel="alternate" type="text/html" href="https://github.com/other/repo/releases/tag/v7.0.0"/>
+  </entry>
+  <entry>
+    <link rel="alternate" type="text/html" href="https://github.com/owner/repo/releases/tag/nightly"/>
+  </entry>
+  <entry>
+    <link rel="alternate" type="text/html" href="https://github.com/owner/repo/releases/tag/v1.3.0-beta.1"/>
+  </entry>
+</feed>"""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.cache = Path(self.temp.name)
+        self.app = replace(APP, repo="owner/repo")
+
+    def tags(self, result):
+        with patch.object(releases, "feed_request", return_value=result) as request:
+            tags = releases.feed_tags(self.app, self.cache, Event())
+        return tags, request
+
+    def test_tags_come_from_this_repositorys_release_links_only_and_are_remembered(self):
+        tags, request = self.tags((200, self.ATOM.encode(), 'W/"a"'))
+        self.assertEqual(tags, ["v1.3.0-beta.1", "app/v1.2.3"])
+        request.assert_called_once_with("owner/repo", "")
+        saved = json.loads((self.cache / f"{self.app.id}-feed.json").read_text())
+        self.assertEqual(saved, {"etag": 'W/"a"', "tags": tags})
+
+    def test_a_saved_etag_makes_the_request_conditional_and_a_304_reuses_the_saved_tags(self):
+        self.tags((200, self.ATOM.encode(), 'W/"a"'))
+        tags, request = self.tags((304, b"", 'W/"a"'))
+        request.assert_called_once_with("owner/repo", 'W/"a"')
+        self.assertEqual(tags, ["v1.3.0-beta.1", "app/v1.2.3"])
+
+    def test_failures_and_unusable_saved_files_mean_unknown(self):
+        self.assertIsNone(self.tags(None)[0])
+        (self.cache / f"{self.app.id}-feed.json").write_text("not json")
+        tags, request = self.tags(None)
+        self.assertIsNone(tags)
+        request.assert_called_once_with("owner/repo", "")  # a bad file is never trusted
+        (self.cache / f"{self.app.id}-feed.json").write_text('{"etag": 5, "tags": "x"}')
+        self.assertEqual(self.tags((200, b"<feed/>", "e"))[0], [])
+
+    def test_cancellation_is_honoured_before_any_request(self):
+        cancel = Event()
+        cancel.set()
+        with (
+            patch.object(releases, "feed_request") as request,
+            self.assertRaises(releases.Cancelled),
+        ):
+            releases.feed_tags(self.app, self.cache, cancel)
+        request.assert_not_called()
+
+    def opener(self, *, error=None, body=b"<feed/>", headers=None):
+        class Reply(io.BytesIO):
+            def __init__(self):
+                super().__init__(body)
+                self.headers = headers or {"ETag": 'W/"x"'}
+
+        class Opener:
+            def open(self, request, timeout):
+                self.request, self.timeout = request, timeout
+                if error is not None:
+                    raise error
+                return Reply()
+
+        opener = Opener()
+        return opener, patch.object(releases, "build_opener", return_value=opener)
+
+    def test_feed_request_is_conditional_bounded_and_never_follows_redirects(self):
+        opener, patched = self.opener()
+        with patched:
+            self.assertEqual(
+                releases.feed_request("owner/repo", 'W/"old"'), (200, b"<feed/>", 'W/"x"')
+            )
+        self.assertEqual(opener.request.full_url, "https://github.com/owner/repo/releases.atom")
+        self.assertEqual(opener.request.get_header("If-none-match"), 'W/"old"')
+        self.assertEqual(opener.timeout, 20)
+
+    def test_feed_request_outcomes(self):
+        def http(code):
+            return HTTPError("u", code, "x", Message(), io.BytesIO())
+
+        with self.opener(error=http(304))[1]:
+            self.assertEqual(releases.feed_request("o/r", 'W/"e"'), (304, b"", 'W/"e"'))
+            self.assertIsNone(releases.feed_request("o/r", ""))  # a 304 needs a saved ETag
+        for failure in (http(404), http(429), http(500), URLError("x"), TimeoutError()):
+            with self.subTest(failure=failure), self.opener(error=failure)[1]:
+                self.assertIsNone(releases.feed_request("o/r", ""))
+        with self.opener(body=b"x" * (releases.MAX_FEED + 1))[1]:
+            self.assertIsNone(releases.feed_request("o/r", ""))
 
 
 class LatestTagTests(unittest.TestCase):

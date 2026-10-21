@@ -261,6 +261,70 @@ def redirect_location(url: str) -> str | None:
     return None
 
 
+MAX_FEED = 8 * 1024 * 1024
+FEED_LINK = re.compile(r'<link[^>]*rel="alternate"[^>]*href="([^"]+)"')
+
+
+def feed_request(repo: str, etag: str) -> tuple[int, bytes, str] | None:
+    """Fetch a repository's public release feed, conditionally; None on any failure."""
+    url = f"https://github.com/{repo}/releases.atom"
+    if not valid_url(url):
+        return None
+    headers = {"User-Agent": f"AppGlider/{APP_VERSION}"}
+    if etag:
+        headers["If-None-Match"] = etag
+    try:
+        with build_opener(NoRedirect()).open(Request(url, headers=headers), timeout=20) as reply:
+            body = reply.read(MAX_FEED + 1)
+            if len(body) > MAX_FEED:
+                return None
+            return 200, body, reply.headers.get("ETag", "")
+    except HTTPError as error:
+        code = error.code
+        error.close()
+        return (304, b"", etag) if code == 304 and etag else None
+    except (URLError, OSError, HTTPException, ValueError):
+        return None
+
+
+def feed_tags(app: App, cache_dir: Path, cancel: Event) -> list[str] | None:
+    """Tags of the repository's recent releases, read from its public feed without the API.
+
+    The feed's ETag and tags are remembered per app, so an unchanged feed is a cheap 304 that
+    does not download the release notes again. None means "unknown": callers use the API.
+    """
+    check_cancel(cancel)
+    path = cache_dir / f"{app.id}-feed.json"
+    saved_etag, saved_tags = "", None
+    with contextlib.suppress(OSError, ValueError, TypeError):
+        if path.stat().st_size <= MAX_METADATA:
+            data = json.loads(path.read_text())
+            if (
+                isinstance(data.get("etag"), str)
+                and isinstance(data.get("tags"), list)
+                and all(isinstance(tag, str) for tag in data["tags"])
+            ):
+                saved_etag, saved_tags = data["etag"], data["tags"]
+    result = feed_request(app.repo, saved_etag if saved_tags is not None else "")
+    if result is None:
+        return None
+    status, body, etag = result
+    if status == 304:
+        return saved_tags
+    prefix = f"https://github.com/{app.repo}/releases/tag/".casefold()
+    tags: list[str] = []
+    for link in FEED_LINK.findall(body.decode("utf-8", "replace")):
+        if link.casefold().startswith(prefix):
+            tag = unquote(link[len(prefix) :])
+            if release_version(tag) is not None and tag not in tags:
+                tags.append(tag)
+        if len(tags) >= 50:
+            break
+    with contextlib.suppress(OSError):
+        atomic_json(path, {"etag": etag, "tags": tags})
+    return tags
+
+
 def latest_tag(repo: str, cancel: Event) -> str | None:
     """The tag GitHub's "Latest" release page points to, read without using the API.
 

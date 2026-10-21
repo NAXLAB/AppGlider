@@ -64,7 +64,11 @@ def observe_headers(headers: Mapping[str, str]) -> None:
 
 def release_result(
     source: Literal[
-        "GitHub API", "GitHub release page", "Public GitHub pages", "Cached information"
+        "GitHub API",
+        "GitHub release page",
+        "GitHub release feed",
+        "Public GitHub pages",
+        "Cached information",
     ],
     repo: str,
     checked_at: float,

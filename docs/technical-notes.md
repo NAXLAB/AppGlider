@@ -34,9 +34,17 @@ who want to know exactly what AppGlider does with their system, and for contribu
   If that version equals the saved one, the saved information is reused and only its
   "checked" time is updated, with no API request. If the tag differs, the page gives no
   clear answer (no release, a renamed repository, an unreadable tag, a network error, HTTP
-  429), or the app has previews turned on, AppGlider goes on to the API exactly as before. The
-  details dialog's **Check releases**, installing and adding a repository always do a full
-  check. The footer reports this source as "GitHub release page".
+  429), AppGlider goes on to the API exactly as before. The details dialog's **Check
+  releases**, installing and adding a repository always do a full check. The footer reports
+  this source as "GitHub release page".
+- **Apps with previews turned on** cannot rely on the "Latest" page, which ignores previews.
+  Their cheap check reads the repository's public Atom release feed
+  (`github.com/<owner>/<repo>/releases.atom`) with a saved ETag, so an unchanged feed is a
+  small `304`. If the newest version in the feed is no newer than the newest version already
+  known, the saved information is reused (source "GitHub release feed"); otherwise, or if
+  the feed cannot be read, the API is used. The feed's first download is large because it
+  carries the release notes (a few megabytes for some projects) and is limited to 8 MiB;
+  AppGlider keeps only its ETag and tag list, in `<app>-feed.json` in the release cache.
 - Checked information is kept across restarts and shown first, so a card can show what was
   known before the new check finishes. Cards show when the information was checked and
   whether a refresh failed. A failed check keeps the last known versions and badges.
@@ -62,9 +70,7 @@ AppGlider needs no GitHub account or token. It uses GitHub's public API, which a
   allowance, so a check costs about one request per installed app whether or not anything
   changed.
 - A scheduled check is skipped while GitHub last reported fewer than 30 requests left,
-  while a download or another check is running, and when nothing is installed. Apps with
-  previews turned on cannot use the cheap check yet, so they still cost about two API
-  requests per check.
+  while a download or another check is running, and when nothing is installed.
 - When the allowance runs out, AppGlider falls back to GitHub's public release pages for
   up to three pages of ten releases, applying the same selection rules.
 - The **GitHub** indicator beside the version button opens **Settings → Applications**,

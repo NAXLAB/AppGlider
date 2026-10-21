@@ -5,10 +5,6 @@ change after discussion. Something being listed here is not a promise that it wi
 
 ## Planned
 
-- **Cheaper checks for apps with previews:** apps with previews turned on still use about
-  two of GitHub's free requests (out of roughly 60 an hour) on every check. The plan is to
-  read GitHub's public release feed for them, so they too only use the allowance when a
-  newer version has appeared.
 - **Install queue:** line up several installs or updates, with clear progress and a way to
   cancel.
 - **AppGlider updating itself:** check for new versions of AppGlider, show what changed and
@@ -30,8 +26,8 @@ change after discussion. Something being listed here is not a promise that it wi
 - **Example catalog built in:** an **Example catalog** button on the welcome screen and in the
   Repositories window adds the ArtCraft apps and SolidCraft without downloading anything.
 - **Cheaper update checks:** checking an app that has not changed now asks GitHub's ordinary
-  release page first and uses none of the free request allowance. The update schedule can
-  now run as often as every hour.
+  release page first (or its public release feed, for apps with previews turned on) and uses
+  none of the free request allowance. The update schedule can now run as often as every hour.
 - **Scheduled update checks and a tray badge:** choose how often AppGlider checks (every
   3, 6, 12 or 24 hours, or only when you ask), and see an amber badge on the tray icon
   while updates are waiting.

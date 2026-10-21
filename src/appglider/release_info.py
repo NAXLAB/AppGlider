@@ -7,7 +7,7 @@ import time
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from threading import Event
-from typing import Any
+from typing import Any, Literal
 
 from appglider import github_status, releases
 from appglider.catalog import App
@@ -178,12 +178,34 @@ def inspect_entries(
     return ReleaseInfo(options[0], options[1], time.time(), options[2], app.build_variant)
 
 
-def unchanged_stable(app: App, cached: ReleaseInfo, cancel: Event) -> bool:
-    """True when GitHub's "Latest" page still points at the stable release we already know."""
-    if app.include_prereleases or cached.stable is None:
-        return False
-    tag = releases.latest_tag(app.repo, cancel)
-    return tag is not None and releases.release_version(tag) == cached.stable.version
+def unchanged_source(
+    app: App, cached: ReleaseInfo, cache_dir: Path, cancel: Event
+) -> Literal["GitHub release page", "GitHub release feed"] | None:
+    """Say how we know nothing new was published, or None when that cannot be shown.
+
+    A stable-only app compares GitHub's "Latest" page with the stable release we know. An app
+    that includes previews compares the newest version in the public release feed with the
+    newest version we know. Neither uses the API allowance.
+    """
+    if not app.include_prereleases:
+        if cached.stable is None:
+            return None
+        tag = releases.latest_tag(app.repo, cancel)
+        if tag is not None and releases.release_version(tag) == cached.stable.version:
+            return "GitHub release page"
+        return None
+    known = [
+        option.version
+        for option in (cached.stable, cached.preview, cached.newer_stable)
+        if option is not None
+    ]
+    tags = releases.feed_tags(app, cache_dir, cancel) if known else None
+    versions = [v for v in (releases.release_version(tag) for tag in tags or []) if v]
+    if versions and releases.version_key(max(versions, key=releases.version_key)) <= (
+        releases.version_key(max(known, key=releases.version_key))
+    ):
+        return "GitHub release feed"
+    return None
 
 
 def discover_releases(
@@ -191,18 +213,20 @@ def discover_releases(
 ) -> ReleaseInfo:
     """Find the releases of an app.
 
-    With `cheap`, a stable-only app whose release information is already saved is checked by
-    reading where GitHub's "Latest" page redirects. That uses no API requests, and the API is
-    asked only when the tag changed or the page gave no clear answer.
+    With `cheap`, an app whose release information is already saved is first checked without
+    the API: stable-only apps by where GitHub's "Latest" page redirects, apps with previews by
+    GitHub's public release feed. The API is asked only when something newer appeared or the
+    answer was unclear.
     """
     releases.check_cancel(cancel)
     cached = cached_info(app, cache_dir)
     if not force and cached and cached.fresh():
         github_status.release_result("Cached information", app.repo, cached.checked_at)
         return cached
-    if cheap and cached and unchanged_stable(app, cached, cancel):
+    source = unchanged_source(app, cached, cache_dir, cancel) if cheap and cached else None
+    if cached and source:
         info = replace(cached, checked_at=time.time())
-        github_status.release_result("GitHub release page", app.repo, info.checked_at)
+        github_status.release_result(source, app.repo, info.checked_at)
         with contextlib.suppress(OSError):
             atomic_json(info_path(app, cache_dir), asdict(info))
         return info
