@@ -58,7 +58,7 @@ AppGlider starts empty. Add apps in either of two ways:
 
 - **+ Add app**: paste a GitHub repository address, choose **Inspect repository**, then
   **Add to library**.
-- **Import catalog…** (under **Settings → Applications → Repositories…**): add a whole
+- **Import catalog…** (in the **Catalog** menu under **Settings → Applications**): add a whole
   list at once from a plain-text file. **Example catalog** adds a ready-made list of the
   ArtCraft apps and SolidCraft that is built into AppGlider
   ([`docs/catalogs/artcraft.toml`](docs/catalogs/artcraft.toml)).

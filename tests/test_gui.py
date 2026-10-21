@@ -16,7 +16,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from catalog_fixture import APPS, STARTER_ENTRIES, stock
 from gui_helpers import close_window
-from PySide6.QtCore import QCoreApplication, QEvent, QSettings, Qt, QTimer
+from PySide6.QtCore import QCoreApplication, QEvent, QRect, QSettings, Qt, QTimer
 from PySide6.QtGui import QCloseEvent, QImage, QPalette, QPixmap
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import (
@@ -41,13 +41,14 @@ from appglider.jobs import TaskResult
 from appglider.library import Installed, Library
 from appglider.release_info import ReleaseInfo, ReleaseOption, info_path
 from appglider.releases import Release
-from appglider.repositories_dialog import RepositoriesDialog
+from appglider.repositories_dialog import RepositoriesPanel
 from appglider.storage import atomic_json
 from appglider.window import (
     DetailsDialog,
     LauncherWindow,
     OrphansDialog,
     SettingsDialog,
+    fit_size,
     notified_versions,
     pinned_apps,
     sort_mode,
@@ -99,8 +100,8 @@ class LibraryTests(unittest.TestCase):
 
         def close_dialog(observed: list[bool]) -> None:
             active = self.qt.activeModalWidget()
-            if isinstance(active, RepositoriesDialog):
-                observed.append(active.adding)
+            if isinstance(active, SettingsDialog):
+                observed.append(active.repositories.adding)
                 active.reject()
 
         observed: list[bool] = []
@@ -109,13 +110,13 @@ class LibraryTests(unittest.TestCase):
         self.assertEqual(observed, [True])
 
         opened: list[bool] = []
-        with patch.object(RepositoriesDialog, "import_catalog", autospec=True) as importer:
+        with patch.object(RepositoriesPanel, "import_catalog", autospec=True) as importer:
             QTimer.singleShot(50, lambda: close_dialog(opened))
             window.welcome_import_button.click()
         importer.assert_called_once()
         self.assertEqual(opened, [False])
 
-        with patch.object(RepositoriesDialog, "import_example_catalog", autospec=True) as example:
+        with patch.object(RepositoriesPanel, "import_example_catalog", autospec=True) as example:
             QTimer.singleShot(50, lambda: close_dialog([]))
             window.welcome_example_button.click()
         example.assert_called_once()
@@ -898,7 +899,7 @@ class LibraryTests(unittest.TestCase):
             with self.subTest(theme=theme):
                 self.settings.setValue("appearance/theme", theme)
                 self.window.apply_theme()
-                dialog = SettingsDialog(self.settings, self.window)
+                dialog = SettingsDialog(self.settings, self.window, self.window.library)
                 self.addCleanup(dialog.close)
                 dialog.folder.setText(self.temp.name)
                 observations = []
@@ -1171,10 +1172,11 @@ class LibraryTests(unittest.TestCase):
 
         def choose() -> None:
             dialog = self.qt.activeModalWidget()
-            if isinstance(dialog, RepositoriesDialog):
+            if isinstance(dialog, SettingsDialog):
                 try:
-                    selected.append(dialog.selected_app.id)
-                    dialog.release_channel.setCurrentIndex(index)
+                    panel = dialog.repositories
+                    selected.append(panel.selected_app.id)
+                    panel.release_channel.setCurrentIndex(index)
                 finally:
                     dialog.reject()
 
@@ -1209,6 +1211,23 @@ class LibraryTests(unittest.TestCase):
         card = self.window.cards[APP.id]
         self.assertTrue(card.available_version.isHidden())
         self.assertEqual(card.installed_version.badge.text(), "Latest")
+
+    def test_preferred_window_size_is_limited_to_the_screen(self) -> None:
+        laptop = fit_size(1040, 816, QRect(0, 0, 1366, 728))
+        self.assertEqual((laptop.width(), laptop.height()), (1040, 655))
+        small = fit_size(1040, 816, QRect(0, 0, 1024, 700))
+        self.assertEqual((small.width(), small.height()), (921, 630))
+        large = fit_size(1040, 816, QRect(0, 0, 2560, 1400))
+        self.assertEqual((large.width(), large.height()), (1040, 816))
+
+    def test_window_size_is_remembered_between_launches(self) -> None:
+        self.window.resize(760, 600)
+        self.window.quitting = True
+        self.window.close()
+        reopened = LauncherWindow(self.settings, self.window.library)
+        self.addCleanup(reopened.deleteLater)
+        self.addCleanup(reopened.close)
+        self.assertEqual((reopened.width(), reopened.height()), (760, 600))
 
     def test_failed_refresh_retains_badges_and_shows_last_checked_without_dialog(self) -> None:
         info = replace(self.release_info(), checked_at=time.time() - 3600)
@@ -1422,7 +1441,7 @@ class LibraryTests(unittest.TestCase):
         self.assertNotIn(failed.window, self.qt.topLevelWidgets())
 
     def test_settings_reject_invalid_destination(self) -> None:
-        dialog = SettingsDialog(self.settings, self.window)
+        dialog = SettingsDialog(self.settings, self.window, self.window.library)
         self.addCleanup(dialog.close)
         for path in ("", "relative/path", "/bad\npath", self.settings.fileName()):
             self.settings.sync()
@@ -1504,7 +1523,7 @@ class LibraryTests(unittest.TestCase):
             QTimer.singleShot(0, inspect_status)
             QTest.mouseClick(self.window.github_button, Qt.MouseButton.LeftButton)
             request.assert_not_called()
-        self.assertEqual(observed[0], "Applications")
+        self.assertEqual(observed[0], "GitHub")
         self.assertIn("unknown", observed[1])
         self.assertIn("0 of 60", observed[2])
         self.assertIn("retry in 10 min", observed[2])

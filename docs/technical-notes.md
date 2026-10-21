@@ -73,7 +73,7 @@ AppGlider needs no GitHub account or token. It uses GitHub's public API, which a
   while a download or another check is running, and when nothing is installed.
 - When the allowance runs out, AppGlider falls back to GitHub's public release pages for
   up to three pages of ten releases, applying the same selection rules.
-- The **GitHub** indicator beside the version button opens **Settings → Applications**,
+- The **GitHub** indicator beside the version button opens **Settings → GitHub**,
   showing the last reported allowance, active retry countdowns and the most recent
   successful result with its repository, source (GitHub API, public pages or cached) and
   time. Opening it makes no network requests. Counts come from earlier GitHub responses and

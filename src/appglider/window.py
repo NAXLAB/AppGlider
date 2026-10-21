@@ -7,9 +7,14 @@ from pathlib import Path
 from threading import Event
 
 from PySide6.QtCore import (
+    QByteArray,
     QEvent,
     QObject,
+    QPointF,
+    QRect,
+    QRectF,
     QSettings,
+    QSize,
     QStandardPaths,
     Qt,
     QThreadPool,
@@ -22,8 +27,13 @@ from PySide6.QtGui import (
     QColor,
     QDesktopServices,
     QIcon,
+    QPainter,
+    QPainterPath,
     QPalette,
+    QPen,
+    QPixmap,
     QResizeEvent,
+    QTransform,
 )
 from PySide6.QtWidgets import (
     QApplication,
@@ -84,10 +94,11 @@ from appglider.releases import (
     variant_label,
     version_key,
 )
-from appglider.repositories_dialog import RepositoriesDialog
+from appglider.repositories_dialog import RepositoriesPanel
 from appglider.version_label import VersionLabel
 
 CARD_MIN_WIDTH = 300
+SCROLLBAR_GAP = 14
 
 
 def icon_label(app: App, size: int, path: Path | None = None) -> QLabel:
@@ -433,7 +444,7 @@ class CardGrid(QWidget):
         self.cards: list[AppCard] = []
         self.columns = 0
         self.layout_grid = QGridLayout(self)
-        self.layout_grid.setContentsMargins(0, 0, 0, 0)
+        self.layout_grid.setContentsMargins(0, 0, SCROLLBAR_GAP, 0)
         self.layout_grid.setSpacing(16)
         self.layout_grid.setAlignment(Qt.AlignmentFlag.AlignTop)
 
@@ -448,7 +459,7 @@ class CardGrid(QWidget):
             self.layout_grid.setColumnStretch(column, 0)
         for row in range(self.layout_grid.rowCount()):
             self.layout_grid.setRowStretch(row, 0)
-        self.columns = max(1, (width + 16) // (CARD_MIN_WIDTH + 16))
+        self.columns = max(1, (width - SCROLLBAR_GAP + 16) // (CARD_MIN_WIDTH + 16))
         for index, card in enumerate(self.cards):
             self.layout_grid.addWidget(card, index // self.columns, index % self.columns)
         for column in range(self.columns):
@@ -638,14 +649,69 @@ class OrphansDialog(QDialog):
         }
 
 
-class SettingsDialog(QDialog):
-    repositories_requested = Signal()
+def fit_size(width: int, height: int, available: QRect) -> QSize:
+    """Limit a preferred window size to 90% of the screen's usable area."""
+    return QSize(min(width, available.width() * 9 // 10), min(height, available.height() * 9 // 10))
 
-    def __init__(self, settings: QSettings, parent: QWidget) -> None:
+
+def screen_area(widget: QWidget | None) -> QRect:
+    screen = widget.screen() if widget is not None else QApplication.primaryScreen()
+    return screen.availableGeometry() if screen is not None else QRect(0, 0, 1920, 1080)
+
+
+def chevron_path(colour: str) -> str:
+    """Return a cached down-arrow image in the given colour for combo boxes."""
+    folder = Path(QStandardPaths.writableLocation(QStandardPaths.StandardLocation.CacheLocation))
+    path = folder / f"chevron-{colour.lstrip('#')}.png"
+    if not path.exists():
+        pixmap = QPixmap(24, 24)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        pen = QPen(QColor(colour), 2.4)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+        painter.setPen(pen)
+        painter.drawPolyline([QPointF(7, 9.5), QPointF(12, 14.5), QPointF(17, 9.5)])
+        painter.end()
+        folder.mkdir(parents=True, exist_ok=True)
+        pixmap.save(str(path))
+    return path.as_posix()
+
+
+def cog_icon(colour: str) -> QIcon:
+    """Draw a settings cog in the given colour."""
+    size = 64
+    pixmap = QPixmap(size, size)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    cog = QPainterPath()
+    cog.setFillRule(Qt.FillRule.WindingFill)
+    centre = QPointF(size / 2, size / 2)
+    cog.addEllipse(centre, 21, 21)
+    for step in range(8):
+        tooth = QPainterPath()
+        tooth.addRoundedRect(QRectF(size / 2 - 6, 4, 12, 18), 3, 3)
+        transform = QTransform()
+        transform.translate(centre.x(), centre.y())
+        transform.rotate(step * 45)
+        transform.translate(-centre.x(), -centre.y())
+        cog.addPath(transform.map(tooth))
+    hole = QPainterPath()
+    hole.addEllipse(centre, 9, 9)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    painter.fillPath(cog.simplified().subtracted(hole), QColor(colour))
+    painter.end()
+    return QIcon(pixmap)
+
+
+class SettingsDialog(QDialog):
+    def __init__(self, settings: QSettings, parent: QWidget, library: Library) -> None:
         super().__init__(parent)
+        self.pending: Callable[[], None] | None = None
         self.setWindowTitle("Settings")
-        self.setMinimumWidth(700)
-        self.resize(760, 520)
+        self.setMinimumSize(860, 620)
+        self.resize(fit_size(1040, 800, screen_area(parent)))
         layout = QVBoxLayout(self)
         layout.setContentsMargins(24, 24, 24, 24)
         layout.setSpacing(20)
@@ -656,7 +722,7 @@ class SettingsDialog(QDialog):
         self.sections = QListWidget()
         self.sections.setObjectName("settingsSections")
         self.sections.setAccessibleName("Settings sections")
-        self.sections.addItems(["General", "Applications", "Storage", "About"])
+        self.sections.addItems(["General", "Applications", "Storage", "GitHub", "About"])
         self.sections.setFixedWidth(150)
         self.pages = QStackedWidget()
         self.sections.currentRowChanged.connect(self.pages.setCurrentIndex)
@@ -664,14 +730,15 @@ class SettingsDialog(QDialog):
         content.addWidget(self.pages, stretch=1)
         layout.addLayout(content, stretch=1)
         page_layouts = []
-        for _ in range(4):
+        for _ in range(5):
             page = QWidget()
             page_layout = QVBoxLayout(page)
             page_layout.setContentsMargins(12, 0, 0, 0)
             page_layout.setSpacing(16)
             self.pages.addWidget(page)
             page_layouts.append(page_layout)
-        general, applications_page, storage, about = page_layouts
+        general, applications_page, storage, github_page, about = page_layouts
+        applications_page.setContentsMargins(12, 0, 0, 0)
         appearance = QGroupBox("Appearance")
         appearance_form = QFormLayout(appearance)
         self.theme = QComboBox()
@@ -680,14 +747,17 @@ class SettingsDialog(QDialog):
         self.theme.addItems(THEME_CHOICES)
         current_theme = str(settings.value("appearance/theme", SYSTEM_THEME))
         self.theme.setCurrentText(current_theme if current_theme in THEME_CHOICES else SYSTEM_THEME)
-        appearance_form.addRow("Appearance", self.theme)
+        appearance_form.addRow("Theme", self.theme)
         general.addWidget(appearance)
+        window_group = QGroupBox("Window")
+        window_layout = QVBoxLayout(window_group)
         self.close_to_tray = QCheckBox("Keep AppGlider in the tray when closing its window")
         self.close_to_tray.setChecked(
             bool(settings.value("general/close-to-tray", True, type=bool))
         )
         self.close_to_tray.setToolTip("Applies when a system tray is available. Use Quit to exit.")
-        general.addWidget(self.close_to_tray)
+        window_layout.addWidget(self.close_to_tray)
+        general.addWidget(window_group)
         updates = QGroupBox("Updates")
         updates_layout = QVBoxLayout(updates)
         updates_form = QFormLayout()
@@ -743,18 +813,9 @@ class SettingsDialog(QDialog):
         note.setWordWrap(True)
         download_layout.addWidget(note)
         storage.addWidget(downloads)
-        applications = QGroupBox("Applications")
-        application_layout = QHBoxLayout(applications)
-        description = QLabel(
-            "Choose release preferences, manage repositories and change application icons."
-        )
-        description.setObjectName("muted")
-        description.setWordWrap(True)
-        application_layout.addWidget(description, stretch=1)
-        self.repositories_button = QPushButton("Repositories…")
-        self.repositories_button.clicked.connect(self.repositories_requested.emit)
-        application_layout.addWidget(self.repositories_button)
-        applications_page.addWidget(applications)
+        self.repositories = RepositoriesPanel(library)
+        self.repositories.stopped.connect(self.finish_pending)
+        applications_page.addWidget(self.repositories, stretch=1)
         github = QGroupBox("GitHub requests")
         github_layout = QVBoxLayout(github)
         self.github_details = QLabel()
@@ -771,7 +832,7 @@ class SettingsDialog(QDialog):
         github_note.setObjectName("muted")
         github_note.setWordWrap(True)
         github_layout.addWidget(github_note)
-        applications_page.addWidget(github)
+        github_page.addWidget(github)
         self.github_timer = QTimer(self)
         self.github_timer.timeout.connect(self.update_github_status)
         self.finished.connect(self.github_timer.stop)
@@ -793,15 +854,22 @@ class SettingsDialog(QDialog):
             )
             about.addWidget(button)
         for page_layout in page_layouts:
-            page_layout.addStretch()
+            if page_layout is not applications_page:
+                page_layout.addStretch()
         self.sections.setCurrentRow(0)
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel
         )
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
-        buttons.button(QDialogButtonBox.StandardButton.Save).setObjectName("primary")
+        self.save_button = buttons.button(QDialogButtonBox.StandardButton.Save)
+        self.cancel_button = buttons.button(QDialogButtonBox.StandardButton.Cancel)
+        self.save_button.setObjectName("primary")
+        self.close_button = buttons.addButton("Close", QDialogButtonBox.ButtonRole.AcceptRole)
+        self.close_button.setObjectName("primary")
         layout.addWidget(buttons)
+        self.sections.currentRowChanged.connect(self.update_buttons)
+        self.update_buttons(self.sections.currentRow())
 
     def update_github_status(self) -> None:
         self.github_details.setText(github_request_status()[1])
@@ -813,7 +881,41 @@ class SettingsDialog(QDialog):
         if folder:
             self.folder.setText(folder)
 
+    def update_buttons(self, section: int) -> None:
+        """Save and Cancel apply to General and Storage; the other pages save as you go."""
+        editing = section in (0, 2)
+        self.save_button.setVisible(editing)
+        self.cancel_button.setVisible(editing)
+        self.close_button.setVisible(not editing)
+
+    def reject(self) -> None:
+        if self.repositories.stop():
+            super().reject()
+        else:
+            self.pending = super().reject
+            self.stopping()
+
+    def stopping(self) -> None:
+        self.setEnabled(False)
+
+    def finish_pending(self) -> None:
+        self.setEnabled(True)
+        pending, self.pending = self.pending, None
+        if pending is not None:
+            pending()
+
+    def closeEvent(self, event: QCloseEvent) -> None:
+        if self.repositories.task is not None:
+            self.reject()
+            event.ignore()
+            return
+        super().closeEvent(event)
+
     def accept(self) -> None:
+        if not self.repositories.stop():
+            self.pending = self.accept
+            self.stopping()
+            return
         if any(ord(c) < 32 or ord(c) == 127 for c in self.folder.text()):
             QMessageBox.warning(self, "Choose a folder", "The path contains control characters.")
             return
@@ -870,7 +972,10 @@ class LauncherWindow(QMainWindow):
         self.quitting = False
         self.setWindowTitle(APP_NAME)
         self.setWindowIcon(QIcon(str(APP_ICON)))
-        self.resize(1120, 800)
+        self.resize(fit_size(1040, 816, screen_area(None)))
+        saved = self.settings.value("window/geometry")
+        if isinstance(saved, QByteArray | bytes):
+            self.restoreGeometry(QByteArray(saved))
         self.setMinimumSize(720, 520)
         body = QWidget()
         layout = QVBoxLayout(body)
@@ -897,10 +1002,15 @@ class LauncherWindow(QMainWindow):
         self.version_button.setAccessibleName(f"About AppGlider {APP_VERSION}")
         self.version_button.setToolTip("About AppGlider")
         self.version_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.version_button.clicked.connect(lambda: self.open_settings(3))
-        settings_button = QPushButton("Settings")
-        settings_button.clicked.connect(lambda: self.open_settings())
-        header.addWidget(settings_button)
+        self.version_button.clicked.connect(lambda: self.open_settings(4))
+        self.settings_button = QToolButton()
+        self.settings_button.setObjectName("settingsButton")
+        self.settings_button.setAccessibleName("Settings")
+        self.settings_button.setToolTip("Settings")
+        self.settings_button.setIconSize(QSize(22, 22))
+        self.settings_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.settings_button.clicked.connect(lambda: self.open_settings())
+        header.addWidget(self.settings_button, alignment=Qt.AlignmentFlag.AlignTop)
         layout.addLayout(header)
         search_row = QHBoxLayout()
         self.search = QLineEdit()
@@ -913,6 +1023,7 @@ class LauncherWindow(QMainWindow):
         self.add_app_button.clicked.connect(lambda: self.open_repositories(adding=True))
         search_row.addWidget(self.add_app_button)
         layout.addLayout(search_row)
+        self.search.setFocus()
         navigation = QHBoxLayout()
         self.tabs = QTabBar()
         self.tabs.setAccessibleName("Library filters")
@@ -921,6 +1032,11 @@ class LauncherWindow(QMainWindow):
             self.tabs.addTab(name)
         navigation.addWidget(self.tabs)
         navigation.addStretch()
+        layout.addLayout(navigation)
+        list_row = QHBoxLayout()
+        self.results = QLabel()
+        self.results.setObjectName("muted")
+        list_row.addWidget(self.results, stretch=1)
         self.sort_combo = QComboBox()
         self.sort_combo.setItemDelegate(QStyledItemDelegate(self.sort_combo))
         self.sort_combo.setAccessibleName("Sort apps")
@@ -931,20 +1047,20 @@ class LauncherWindow(QMainWindow):
             self.sort_combo.addItem(f"Sort: {label}", mode)
         self.sort_combo.setCurrentIndex(max(0, self.sort_combo.findData(sort_mode(self.settings))))
         self.sort_combo.currentIndexChanged.connect(self.sort_changed)
-        navigation.addWidget(self.sort_combo)
+        self.sort_combo.setObjectName("compact")
+        list_row.addWidget(self.sort_combo)
         self.update_all_button = QPushButton("Update all")
         self.update_all_button.clicked.connect(self.update_all)
-        navigation.addWidget(self.update_all_button)
+        self.update_all_button.setObjectName("compact")
+        list_row.addWidget(self.update_all_button)
         self.check_button = QPushButton("Refresh releases")
         self.check_button.setToolTip(
             "Check installed applications for eligible stable and preview updates"
         )
         self.check_button.clicked.connect(lambda: self.refresh_releases(force=True))
-        navigation.addWidget(self.check_button)
-        layout.addLayout(navigation)
-        self.results = QLabel()
-        self.results.setObjectName("muted")
-        layout.addWidget(self.results)
+        self.check_button.setObjectName("compact")
+        list_row.addWidget(self.check_button)
+        layout.addLayout(list_row)
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setFrameShape(QFrame.Shape.NoFrame)
@@ -1021,7 +1137,7 @@ class LauncherWindow(QMainWindow):
         self.github_button.setObjectName("githubStatus")
         self.github_button.setAccessibleName("GitHub request status")
         self.github_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.github_button.clicked.connect(lambda: self.open_settings(1))
+        self.github_button.clicked.connect(lambda: self.open_settings(3))
         progress_row.addWidget(self.github_button)
         progress_row.addWidget(self.version_button)
         layout.addLayout(progress_row)
@@ -1113,7 +1229,7 @@ class LauncherWindow(QMainWindow):
     def update_github_status(self) -> None:
         label, details, limited = github_request_status()
         self.github_button.setText(label)
-        self.github_button.setToolTip(details + "\nClick for details in Settings → Applications.")
+        self.github_button.setToolTip(details + "\nClick for details in Settings → GitHub.")
         if self.github_button.property("limited") != limited:
             self.github_button.setProperty("limited", limited)
             self.github_button.style().unpolish(self.github_button)
@@ -1312,12 +1428,36 @@ class LauncherWindow(QMainWindow):
         dialog.exec()
         dialog.deleteLater()
 
-    def open_settings(self, section: int = 0) -> None:
-        dialog = SettingsDialog(self.settings, self)
+    def open_settings(
+        self,
+        section: int = 0,
+        *,
+        adding: bool = False,
+        app_id: str | None = None,
+        choose_build: bool = False,
+        import_catalog: bool = False,
+        import_example: bool = False,
+    ) -> None:
+        try:
+            dialog = SettingsDialog(self.settings, self, self.library)
+        except (OSError, ValueError) as error:
+            QMessageBox.warning(self, "Cannot open settings", str(error))
+            return
+        panel = dialog.repositories
+        panel.setEnabled(self.task is None)
+        panel.catalog_changed.connect(self.catalog_changed)
         dialog.sections.setCurrentRow(section)
-        dialog.repositories_button.setEnabled(self.task is None)
-        dialog.repositories_requested.connect(lambda: self.open_repositories())
         dialog.theme.currentTextChanged.connect(self.apply_theme)
+        if adding:
+            panel.start_add_repository()
+        elif app_id:
+            panel.open_app(app_id)
+            if choose_build:
+                panel.choose_build()
+        if import_catalog:
+            QTimer.singleShot(0, panel.import_catalog)
+        elif import_example:
+            QTimer.singleShot(0, panel.import_example_catalog)
         accepted = dialog.exec() == QDialog.DialogCode.Accepted
         if not accepted:
             self.apply_theme()
@@ -1358,28 +1498,15 @@ class LauncherWindow(QMainWindow):
         import_catalog: bool = False,
         import_example: bool = False,
     ) -> None:
-        if self.task is not None:
-            return
-        try:
-            dialog = RepositoriesDialog(self.library, self)
-        except (OSError, ValueError) as error:
-            QMessageBox.warning(self, "Cannot open repositories", str(error))
-            return
-        dialog.catalog_changed.connect(self.catalog_changed)
-        if adding:
-            dialog.start_add_repository()
-        elif app_id:
-            for row in range(dialog.repo_list.count()):
-                if dialog.repo_list.item(row).data(Qt.ItemDataRole.UserRole) == app_id:
-                    dialog.repo_list.setCurrentRow(row)
-                    break
-            if choose_build:
-                dialog.choose_build()
-        if import_catalog:
-            QTimer.singleShot(0, dialog.import_catalog)
-        elif import_example:
-            QTimer.singleShot(0, dialog.import_example_catalog)
-        dialog.exec()
+        if self.task is None:
+            self.open_settings(
+                1,
+                adding=adding,
+                app_id=app_id,
+                choose_build=choose_build,
+                import_catalog=import_catalog,
+                import_example=import_example,
+            )
 
     def has_update(self, app_id: str) -> bool:
         installed, release = self.installed.get(app_id), self.releases.get(app_id)
@@ -1748,6 +1875,7 @@ class LauncherWindow(QMainWindow):
         self.start_task(f"Removing {app.name}…", operation)
 
     def closeEvent(self, event: QCloseEvent) -> None:
+        self.settings.setValue("window/geometry", self.saveGeometry())
         if (
             not self.quitting
             and self.settings.value("general/close-to-tray", True, type=bool)
@@ -1819,6 +1947,7 @@ class LauncherWindow(QMainWindow):
         palette.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.ButtonText, QColor(muted))
         if theme in THEMES:
             app.setPalette(palette)
+        self.settings_button.setIcon(cog_icon(foreground))
         app.setStyleSheet(f"""
             QWidget {{ font-size: 14px; }}
             QMainWindow, QDialog {{ background: {background}; }}
@@ -1828,13 +1957,24 @@ class LauncherWindow(QMainWindow):
             QLabel#sectionTitle {{ font-size: 18px; font-weight: 650; }}
             QGroupBox {{ background: {surface}; border: 1px solid {border};
                 border-radius: 10px; margin-top: 12px; padding: 18px 14px 14px; }}
-            QDialog#repositoriesDialog QGroupBox {{ padding: 10px 14px; }}
+            QWidget#repositoriesPanel QGroupBox {{ padding: 16px 14px 10px; }}
             QGroupBox::title {{ subcontrol-origin: margin; left: 14px;
-                padding: 0 6px; color: {muted}; }}
+                padding: 0 6px; color: {foreground}; font-weight: 600; }}
+            QPushButton#compact {{ padding: 6px 12px; }}
+            QComboBox#compact {{ padding: 6px 10px; }}
+            QToolButton#settingsButton {{ padding: 8px; }}
+            QFrame#statusStrip {{ background: {surface}; border: 1px solid {border};
+                border-radius: 8px; }}
+            QProgressBar {{ background: {background}; border: none; border-radius: 3px; }}
+            QProgressBar::chunk {{ background: {accent}; border-radius: 3px; }}
             QListWidget#repositories {{ background: {surface}; border: 1px solid {border};
                 border-radius: 10px; outline: 0; }}
             QListWidget#repositories:focus {{ border: 2px solid {accent}; }}
-            QListWidget#repositories::item {{ padding: 12px 8px; border-radius: 6px; }}
+            QListWidget#repositories::item {{ padding: 10px 8px; border-radius: 6px; }}
+            QPushButton#backLink {{ background: transparent; border: none; color: {accent};
+                padding: 4px 2px; font-weight: 600; }}
+            QPushButton#backLink:hover {{ text-decoration: underline; }}
+            QPushButton#backLink:disabled {{ color: {muted}; }}
             QListWidget#repositories::item:selected {{ background: {background}; color: {accent}; }}
             QLabel#muted, QLabel#footer {{ color: {muted}; }}
             QLabel#footer {{ font-size: 12px; padding-top: 8px; }}
@@ -1886,6 +2026,10 @@ class LauncherWindow(QMainWindow):
                 background: {surface}; color: {accent}; }}
             QLineEdit, QComboBox {{ background: {surface}; color: {foreground};
                 border: 1px solid {border}; border-radius: 7px; padding: 9px; }}
+            QComboBox {{ min-height: 20px; }}
+            QComboBox::drop-down {{ border: none; width: 28px; }}
+            QComboBox::down-arrow {{ image: url({chevron_path(foreground)});
+                width: 20px; height: 20px; }}
             QComboBox QAbstractItemView {{ background: {surface}; color: {foreground};
                 border: 1px solid {border}; padding: 4px; outline: 0;
                 selection-background-color: {accent}; selection-color: {on_accent}; }}

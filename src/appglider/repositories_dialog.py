@@ -5,7 +5,7 @@ from pathlib import Path
 from threading import Event
 
 from PySide6.QtCore import QSize, Qt, QThreadPool, QTimer, Signal
-from PySide6.QtGui import QCloseEvent, QIcon, QPixmap
+from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
@@ -20,11 +20,15 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QListWidgetItem,
+    QMenu,
     QPlainTextEdit,
     QProgressBar,
     QPushButton,
+    QRadioButton,
     QScrollArea,
+    QStackedWidget,
     QStyledItemDelegate,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -104,10 +108,37 @@ class CatalogPreviewDialog(QDialog):
         layout.addWidget(buttons)
 
 
-class RepositoriesDialog(QDialog):
-    catalog_changed = Signal()
+class ChannelChoice(QWidget):
+    """Two radio buttons choosing stable-only or stable-and-preview releases."""
 
-    def __init__(self, library: Library, parent: QWidget) -> None:
+    currentIndexChanged = Signal(int)
+
+    def __init__(self) -> None:
+        super().__init__()
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(6)
+        self.stable = QRadioButton("Stable releases only")
+        self.preview = QRadioButton("Stable and prerelease versions")
+        self.stable.setChecked(True)
+        layout.addWidget(self.stable)
+        layout.addWidget(self.preview)
+        self.preview.toggled.connect(lambda checked: self.currentIndexChanged.emit(int(checked)))
+
+    def currentIndex(self) -> int:
+        return int(self.preview.isChecked())
+
+    def setCurrentIndex(self, index: int) -> None:
+        (self.preview if index else self.stable).setChecked(True)
+
+
+class RepositoriesPanel(QWidget):
+    """The Applications page of Settings: repositories, releases, builds and icons."""
+
+    catalog_changed = Signal()
+    stopped = Signal()
+
+    def __init__(self, library: Library, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.library = library
         self.task: Task | None = None
@@ -121,37 +152,78 @@ class RepositoriesDialog(QDialog):
         self.adding = False
         self.build_override: str | None = None
         self.inspection_app: App | None = None
-        self.setWindowTitle("Repositories")
-        self.setObjectName("repositoriesDialog")
-        self.setMinimumWidth(800)
-        self.resize(960, 720)
+        self.setObjectName("repositoriesPanel")
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(24, 20, 24, 20)
-        layout.setSpacing(16)
-        header = QHBoxLayout()
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(12)
+        self.pages = QStackedWidget()
+        layout.addWidget(self.pages, stretch=1)
+
+        # Page 0: the list of applications.
+        list_page = QWidget()
+        list_layout = QVBoxLayout(list_page)
+        list_layout.setContentsMargins(0, 0, 0, 0)
+        list_layout.setSpacing(12)
+        toolbar = QHBoxLayout()
         heading = QVBoxLayout()
         title = QLabel("Your applications")
-        title.setObjectName("dialogTitle")
+        title.setObjectName("sectionTitle")
         heading.addWidget(title)
-        note = QLabel("Choose releases, manage repositories and application icons.")
-        note.setObjectName("muted")
-        heading.addWidget(note)
-        header.addLayout(heading, stretch=1)
-        self.new_repository_button = QPushButton("Add repository")
+        self.list_hint = QLabel("Choose an app to change its updates, build or icon.")
+        self.list_hint.setObjectName("muted")
+        heading.addWidget(self.list_hint)
+        toolbar.addLayout(heading, stretch=1)
+        self.catalog_button = QToolButton()
+        self.catalog_button.setText("Catalog ▾")
+        self.catalog_button.setToolTip("Import or export a plain-text TOML list of apps.")
+        self.catalog_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        catalog_menu = QMenu(self.catalog_button)
+        self.import_button = catalog_menu.addAction("Import catalog…")
+        self.import_button.setToolTip("Add apps from a plain-text TOML catalog file.")
+        self.import_button.triggered.connect(self.import_catalog)
+        self.example_button = catalog_menu.addAction("Example catalog…")
+        self.example_button.setToolTip(
+            "Add the ArtCraft apps and SolidCraft, a ready-made example list."
+        )
+        self.example_button.triggered.connect(self.import_example_catalog)
+        self.export_button = catalog_menu.addAction("Export catalog…")
+        self.export_button.setToolTip("Save your repositories as a plain-text TOML file.")
+        self.export_button.triggered.connect(self.export_catalog)
+        self.catalog_button.setMenu(catalog_menu)
+        toolbar.addWidget(self.catalog_button)
+        self.new_repository_button = QPushButton("+ Add repository")
         self.new_repository_button.setObjectName("primary")
         self.new_repository_button.clicked.connect(self.start_add_repository)
-        header.addWidget(self.new_repository_button)
-        layout.addLayout(header)
-        content = QHBoxLayout()
-        content.setSpacing(24)
+        toolbar.addWidget(self.new_repository_button)
+        list_layout.addLayout(toolbar)
         self.repo_list = QListWidget()
         self.repo_list.setObjectName("repositories")
         self.repo_list.setAccessibleName("Repositories")
-        self.repo_list.setIconSize(QSize(32, 32))
-        self.repo_list.setMinimumWidth(230)
+        self.repo_list.setIconSize(QSize(40, 40))
         self.repo_list.currentRowChanged.connect(self.select_repository)
-        content.addWidget(self.repo_list, stretch=2)
-        editor_column = QVBoxLayout()
+        self.repo_list.itemClicked.connect(self.open_item)
+        self.repo_list.itemActivated.connect(self.open_item)
+        list_layout.addWidget(self.repo_list, stretch=1)
+        self.list_empty = QLabel(
+            "No applications yet. Add a repository, or import the example catalog."
+        )
+        self.list_empty.setObjectName("emptyState")
+        self.list_empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.list_empty.setWordWrap(True)
+        list_layout.addWidget(self.list_empty, stretch=1)
+        self.pages.addWidget(list_page)
+
+        # Page 1: one application, or the add-an-application flow.
+        detail_page = QWidget()
+        detail_layout = QVBoxLayout(detail_page)
+        detail_layout.setContentsMargins(0, 0, 0, 0)
+        detail_layout.setSpacing(12)
+        self.back_button = QPushButton("‹ Applications")
+        self.back_button.setObjectName("backLink")
+        self.back_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.back_button.setAutoDefault(False)
+        self.back_button.clicked.connect(self.show_list)
+        detail_layout.addWidget(self.back_button, alignment=Qt.AlignmentFlag.AlignLeft)
         editor_widget = QWidget()
         editor = QVBoxLayout(editor_widget)
         editor.setContentsMargins(0, 0, 8, 0)
@@ -162,12 +234,12 @@ class RepositoriesDialog(QDialog):
         self.editor_scroll.setFrameShape(QFrame.Shape.NoFrame)
         self.editor_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.editor_scroll.setWidget(editor_widget)
-        editor_column.addWidget(self.editor_scroll, stretch=1)
         self.details_page = QWidget()
         details = QVBoxLayout(self.details_page)
         details.setContentsMargins(0, 0, 0, 0)
         details.setSpacing(12)
         selected = QHBoxLayout()
+        selected.setSpacing(14)
         self.detail_icon = QLabel()
         self.detail_icon.setFixedSize(64, 64)
         selected.addWidget(self.detail_icon)
@@ -185,11 +257,7 @@ class RepositoriesDialog(QDialog):
         identity.addWidget(self.detail_source)
         selected.addLayout(identity, stretch=1)
         details.addLayout(selected)
-        self.detail_note = QLabel()
-        self.detail_note.setWordWrap(True)
-        self.detail_note.setObjectName("muted")
-        details.addWidget(self.detail_note)
-        editor.addWidget(self.details_page)
+        detail_layout.addWidget(self.details_page)
         self.add_page = QWidget()
         add_layout = QVBoxLayout(self.add_page)
         add_layout.setContentsMargins(0, 0, 0, 0)
@@ -210,34 +278,37 @@ class RepositoriesDialog(QDialog):
         self.name.setAccessibleName("Application name")
         self.url.textChanged.connect(lambda _: self.invalidate_preview())
         self.name.textChanged.connect(lambda _: self.invalidate_preview())
+        self.url.returnPressed.connect(self.inspect_repository)
         form.addRow("Repository", self.url)
         form.addRow("Name", self.name)
         add_layout.addLayout(form)
-        self.inspect_button = QPushButton("Inspect repository")
-        self.inspect_button.clicked.connect(self.inspect_repository)
-        self.inspect_button.setAutoDefault(False)
-        editor.addWidget(self.add_page)
+        detail_layout.addWidget(self.add_page)
+        detail_layout.addWidget(self.editor_scroll, stretch=1)
         self.add_page.hide()
-        release_options = QGroupBox("Release preference")
+        release_options = QGroupBox("Updates")
         options_layout = QVBoxLayout(release_options)
-        self.release_channel = QComboBox()
-        self.release_channel.setItemDelegate(QStyledItemDelegate(self.release_channel))
+        self.release_channel = ChannelChoice()
         self.release_channel.setAccessibleName("Release preference")
-        self.release_channel.addItems(["Stable releases only", "Stable and prerelease versions"])
         self.release_channel.currentIndexChanged.connect(self.change_release_preference)
         options_layout.addWidget(self.release_channel)
         release_note = QLabel(
-            "Preview versions may be less reliable. "
-            "Stable releases remain eligible when previews are enabled."
+            "Previews may be less reliable. Stable releases stay eligible either way."
         )
         release_note.setWordWrap(True)
         release_note.setObjectName("muted")
-        options_layout.addWidget(release_note)
-        options_layout.addWidget(self.inspect_button)
-        self.check_release_button = QPushButton("Check available release")
+        note_row = QHBoxLayout()
+        note_row.addWidget(release_note, stretch=1)
+        self.check_release_button = QPushButton("Check now")
+        self.check_release_button.setToolTip("Look up the release this app would update to.")
         self.check_release_button.clicked.connect(self.inspect_repository)
-        options_layout.addWidget(self.check_release_button)
+        note_row.addWidget(self.check_release_button)
+        options_layout.addLayout(note_row)
         editor.addWidget(release_options)
+        self.inspect_button = QPushButton("Inspect repository")
+        self.inspect_button.setObjectName("primary")
+        self.inspect_button.clicked.connect(self.inspect_repository)
+        self.inspect_button.setAutoDefault(False)
+        editor.addWidget(self.inspect_button, alignment=Qt.AlignmentFlag.AlignLeft)
         self.build_group = QGroupBox("Build variant")
         build_layout = QVBoxLayout(self.build_group)
         self.build_combo = QComboBox()
@@ -248,16 +319,18 @@ class RepositoriesDialog(QDialog):
         )
         self.build_combo.setMinimumContentsLength(20)
         self.build_combo.currentIndexChanged.connect(self.change_build_variant)
-        build_layout.addWidget(self.build_combo)
+        build_row = QHBoxLayout()
+        build_row.addWidget(self.build_combo, stretch=1)
+        self.choose_build_button = QPushButton("Choose another build…")
+        self.choose_build_button.clicked.connect(self.choose_build)
+        build_row.addWidget(self.choose_build_button)
+        build_layout.addLayout(build_row)
         build_note = QLabel(
             "Choose the build suitable for your system. This choice is remembered for updates."
         )
         build_note.setWordWrap(True)
         build_note.setObjectName("muted")
         build_layout.addWidget(build_note)
-        self.choose_build_button = QPushButton("Choose another build…")
-        self.choose_build_button.clicked.connect(self.choose_build)
-        build_layout.addWidget(self.choose_build_button)
         editor.addWidget(self.build_group)
         self.build_group.hide()
         self.release_preview = QGroupBox("Available release")
@@ -277,6 +350,7 @@ class RepositoriesDialog(QDialog):
         editor.addWidget(self.release_preview)
         self.icon_group = QGroupBox("Application icon")
         icon_row = QHBoxLayout(self.icon_group)
+        icon_row.setSpacing(14)
         self.icon_preview = QLabel()
         self.icon_preview.setFixedSize(64, 64)
         self.icon_preview.setAccessibleName("Application icon preview")
@@ -292,18 +366,20 @@ class RepositoriesDialog(QDialog):
         self.icon_choices.currentIndexChanged.connect(self.select_icon)
         icon_controls.addWidget(self.icon_choices)
         icon_actions = QHBoxLayout()
-        self.find_icons_button = QPushButton("Find icons")
+        self.find_icons_button = QPushButton("Find online")
+        self.find_icons_button.setToolTip("Look for icons in the application's repository.")
         self.find_icons_button.clicked.connect(self.find_existing_icons)
         icon_actions.addWidget(self.find_icons_button)
-        self.choose_icon_button = QPushButton("Choose icon…")
+        self.choose_icon_button = QPushButton("Choose file…")
         self.choose_icon_button.clicked.connect(self.choose_icon)
         icon_actions.addWidget(self.choose_icon_button)
+        icon_actions.addStretch()
         icon_controls.addLayout(icon_actions)
         icon_row.addLayout(icon_controls, stretch=1)
         editor.addWidget(self.icon_group)
         editor.addStretch()
         actions = QHBoxLayout()
-        self.remove_button = QPushButton("Remove repository")
+        self.remove_button = QPushButton("Remove from library")
         self.remove_button.setObjectName("danger")
         self.remove_button.clicked.connect(self.remove_repository)
         actions.addWidget(self.remove_button)
@@ -312,40 +388,32 @@ class RepositoriesDialog(QDialog):
         self.add_button.setObjectName("primary")
         self.add_button.clicked.connect(self.add_repository)
         actions.addWidget(self.add_button)
-        editor_column.addLayout(actions)
-        content.addLayout(editor_column, stretch=4)
-        layout.addLayout(content, stretch=1)
-        footer = QHBoxLayout()
+        detail_layout.addLayout(actions)
+        self.pages.addWidget(detail_page)
+
+        strip = QFrame()
+        strip.setObjectName("statusStrip")
+        strip_layout = QVBoxLayout(strip)
+        strip_layout.setContentsMargins(12, 8, 12, 8)
+        strip_layout.setSpacing(6)
         self.status = QLabel("Repository, release and icon changes save immediately.")
         self.status.setTextFormat(Qt.TextFormat.PlainText)
         self.status.setObjectName("muted")
         self.status.setWordWrap(True)
-        footer.addWidget(self.status, stretch=1)
+        self.status.setMinimumHeight(self.status.fontMetrics().lineSpacing() * 2)
+        self.status.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        strip_layout.addWidget(self.status)
         self.busy_bar = QProgressBar()
+        retain = self.busy_bar.sizePolicy()
+        retain.setRetainSizeWhenHidden(True)
+        self.busy_bar.setSizePolicy(retain)
         self.busy_bar.setRange(0, 0)  # moving, because the time needed is not known
-        self.busy_bar.setFixedWidth(140)
+        self.busy_bar.setFixedHeight(6)
         self.busy_bar.setTextVisible(False)
         self.busy_bar.setAccessibleName("Search in progress")
         self.busy_bar.hide()
-        footer.addWidget(self.busy_bar)
-        self.import_button = QPushButton("Import catalog…")
-        self.import_button.setToolTip("Add apps from a plain-text TOML catalog file.")
-        self.import_button.clicked.connect(self.import_catalog)
-        footer.addWidget(self.import_button)
-        self.example_button = QPushButton("Example catalog…")
-        self.example_button.setToolTip(
-            "Add the ArtCraft apps and SolidCraft, a ready-made example list."
-        )
-        self.example_button.clicked.connect(self.import_example_catalog)
-        footer.addWidget(self.example_button)
-        self.export_button = QPushButton("Export catalog…")
-        self.export_button.setToolTip("Save your repositories as a plain-text TOML file.")
-        self.export_button.clicked.connect(self.export_catalog)
-        footer.addWidget(self.export_button)
-        self.buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
-        self.buttons.rejected.connect(self.reject)
-        footer.addWidget(self.buttons)
-        layout.addLayout(footer)
+        strip_layout.addWidget(self.busy_bar)
+        layout.addWidget(strip)
         self.refresh_list()
         self.repo_list.setCurrentRow(0)
         self.set_busy(False)
@@ -355,13 +423,45 @@ class RepositoriesDialog(QDialog):
         self.repo_list.blockSignals(True)
         self.repo_list.clear()
         for app in sorted(apps, key=lambda app: app.name.casefold()):
-            item = QListWidgetItem(f"{app.name}\n{app.repo}")
+            details = [app.repo, "Previews" if app.include_prereleases else "Stable"]
+            if app.build_variant:
+                details.append(variant_label(app.build_variant))
+            item = QListWidgetItem(f"{app.name}\n{'  ·  '.join(details)}")
             item.setToolTip(app.source_url)
-            item.setIcon(QIcon(icon_pixmap(self.library.icon_path(app), 32)))
+            item.setIcon(QIcon(icon_pixmap(self.library.icon_path(app), 40)))
             item.setData(Qt.ItemDataRole.UserRole, app.id)
             self.repo_list.addItem(item)
         self.repo_list.blockSignals(False)
+        self.repo_list.setVisible(bool(apps))
+        self.list_empty.setVisible(not apps)
         self.update_remove_button()
+
+    def open_item(self, item: QListWidgetItem) -> None:
+        if self.task is not None:
+            return
+        self.repo_list.setCurrentItem(item)
+        self.select_repository()
+        self.pages.setCurrentIndex(1)
+
+    def open_app(self, app_id: str) -> None:
+        for row in range(self.repo_list.count()):
+            item = self.repo_list.item(row)
+            if item.data(Qt.ItemDataRole.UserRole) == app_id:
+                self.open_item(item)
+                return
+
+    def show_list(self) -> None:
+        if self.task is not None:
+            return
+        if self.adding:
+            self.adding = False
+            self.invalidate_preview()
+            self.add_page.hide()
+            self.details_page.show()
+        self.refresh_list()
+        self.pages.setCurrentIndex(0)
+        self.status.setText("Repository, release and icon changes save immediately.")
+        self.set_busy(False)
 
     def update_remove_button(self) -> None:
         item = self.repo_list.currentItem()
@@ -387,7 +487,9 @@ class RepositoriesDialog(QDialog):
         self.selected_app = app
         if app and app.build_variant:
             self.show_build_choices(
-                ((app.build_variant, variant_label(app.build_variant)),), app.build_variant
+                ((app.build_variant, variant_label(app.build_variant)),),
+                app.build_variant,
+                reveal=False,
             )
         self.release_channel.blockSignals(True)
         self.release_channel.setCurrentIndex(int(bool(app and app.include_prereleases)))
@@ -395,11 +497,6 @@ class RepositoriesDialog(QDialog):
         self.icon_target = app
         self.detail_name.setText(app.name if app else "Select an application")
         self.detail_source.setText(app.repo if app else "")
-        self.detail_note.setText(
-            "Choose an icon for the library, tray and application menu."
-            if self.icon_target
-            else "Select an application to see its repository."
-        )
         self.set_icon_options(())
         if self.icon_target:
             path = self.library.icon_path(self.icon_target)
@@ -427,6 +524,7 @@ class RepositoriesDialog(QDialog):
         self.repo_list.blockSignals(False)
         self.details_page.hide()
         self.add_page.show()
+        self.pages.setCurrentIndex(1)
         self.url.clear()
         self.name.clear()
         self.invalidate_preview()
@@ -454,9 +552,7 @@ class RepositoriesDialog(QDialog):
         self.icon_target = self.selected_app
         self.release = None
         self.release_preview.hide()
-        self.status.setText(
-            "Release preference saved. Check the available release, or close to update the library."
-        )
+        self.status.setText("Release preference saved. Check the available release.")
         self.catalog_changed.emit()
 
     def invalidate_preview(self, *, clear_build: bool = True, clear_icons: bool = True) -> None:
@@ -482,7 +578,9 @@ class RepositoriesDialog(QDialog):
             self.build_group.hide()
         self.update_remove_button()
 
-    def show_build_choices(self, choices: tuple[tuple[str, str], ...], selected: str = "") -> None:
+    def show_build_choices(
+        self, choices: tuple[tuple[str, str], ...], selected: str = "", *, reveal: bool = True
+    ) -> None:
         self.build_combo.blockSignals(True)
         self.build_combo.clear()
         self.build_combo.addItem("Choose a build…", "")
@@ -495,7 +593,10 @@ class RepositoriesDialog(QDialog):
         self.build_combo.blockSignals(False)
         self.choose_build_button.setVisible(not self.adding and bool(selected))
         self.build_group.show()
-        QTimer.singleShot(0, self, lambda: self.editor_scroll.ensureWidgetVisible(self.build_group))
+        if reveal:
+            QTimer.singleShot(
+                0, self, lambda: self.editor_scroll.ensureWidgetVisible(self.build_group)
+            )
 
     def choose_build(self) -> None:
         if self.task is None:
@@ -575,6 +676,8 @@ class RepositoriesDialog(QDialog):
         self.inspect_button.setEnabled(not busy)
         self.inspect_button.setText("Inspecting…" if busy else "Inspect repository")
         self.new_repository_button.setEnabled(not busy and not self.adding)
+        self.catalog_button.setEnabled(not busy)
+        self.back_button.setEnabled(not busy)
         self.import_button.setEnabled(not busy and not self.adding)
         self.example_button.setEnabled(not busy and not self.adding)
         self.export_button.setEnabled(not busy)
@@ -593,7 +696,7 @@ class RepositoriesDialog(QDialog):
         self.task = None
         self.set_busy(False)
         if self.closing:
-            super().reject()
+            self.stopped.emit()
             return
         target = self.inspection_app
         if result.build_choices and target:
@@ -652,7 +755,7 @@ class RepositoriesDialog(QDialog):
                 "Build preference saved for future installs and updates. "
                 "The installed copy was kept."
                 if build_changed
-                else "Release checked. Close this window to return to the library."
+                else "Release checked."
             )
             self.catalog_changed.emit()
         self.set_busy(False)
@@ -687,7 +790,7 @@ class RepositoriesDialog(QDialog):
         self.add_button.setEnabled(False)
         self.release = None
         self.candidate = None
-        self.status.setText(f"Added {app.name}. Close this window to install it.{warning}")
+        self.status.setText(f"Added {app.name}. Close Settings to install it.{warning}")
         self.catalog_changed.emit()
 
     def show_icon(self, path: Path | bytes) -> None:
@@ -839,7 +942,7 @@ class RepositoriesDialog(QDialog):
         self.task = None
         self.set_busy(False)
         if self.closing:
-            super().reject()
+            self.stopped.emit()
             return
         if not result.icons:
             self.status.setText(result.message)
@@ -861,21 +964,15 @@ class RepositoriesDialog(QDialog):
         except (OSError, ValueError) as error:
             self.status.setText(str(error))
             return
+        self.show_list()
         self.status.setText("Repository removed. No application files were deleted.")
         self.catalog_changed.emit()
 
-    def reject(self) -> None:
-        if self.task is not None:
-            self.closing = True
-            self.task.cancel.set()
-            self.buttons.setEnabled(False)
-            self.status.setText("Stopping… one moment.")
-            return
-        super().reject()
-
-    def closeEvent(self, event: QCloseEvent) -> None:
-        if self.task is not None:
-            self.reject()
-            event.ignore()
-            return
-        super().closeEvent(event)
+    def stop(self) -> bool:
+        """Cancel any running search; return True when nothing is left running."""
+        if self.task is None:
+            return True
+        self.closing = True
+        self.task.cancel.set()
+        self.status.setText("Stopping… one moment.")
+        return False

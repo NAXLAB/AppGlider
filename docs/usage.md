@@ -120,8 +120,7 @@ cancelled never replaces the version you already have.
 
 Projects often publish test versions ("beta", "preview") ahead of the real thing. By
 default AppGlider only offers **stable** releases. To include previews for an app, open
-**⋯ → Application preferences…** on its card, or **Settings → Applications →
-Repositories…**, and choose **Stable and prerelease versions**. **Check available release**
+**⋯ → Application preferences…** on its card, or **Settings → Applications**, and choose **Stable and prerelease versions**. **Check available release**
 shows what that would give you without installing anything.
 
 - Green **Latest** badges mark the project's latest stable release. Amber **Pre-release**
@@ -152,20 +151,18 @@ some big projects). While it works you will see a moving bar and a message such 
 through OrcaSlicer's folders… 7 pages so far", so you can tell it has not stopped. To stop it,
 close the window. You can pick one
 of the candidates it finds, or **Choose icon…** to use your own PNG or SVG file. To change
-an app's icon later, open **Settings → Applications → Repositories…**, select the app and
+an app's icon later, open **Settings → Applications**, select the app and
 use **Find icons** or **Choose icon…**. Icons are saved on your computer and work offline.
 If there is no icon, AppGlider's own is used. Apps from the example catalog come with their
 icons.
 
 ## Catalogs: sharing a list of apps
 
-A catalog is a plain text file that lists apps. Open **Settings → Applications →
-Repositories…**, then use **Import catalog…** to add everyone on a list at once, or
+A catalog is a plain text file that lists apps. Open **Settings → Applications**, then use **Catalog → Import catalog…** to add everyone on a list at once, or
 **Export catalog…** to save your own list, perhaps to back it up or share it.
 
 A ready-made example list of the ArtCraft apps and SolidCraft is built in: choose **Example
-catalog** on the welcome screen, or **Example catalog…** in **Settings → Applications →
-Repositories…**. The same file is [`catalogs/artcraft.toml`](catalogs/artcraft.toml), also
+catalog** on the welcome screen, or **Catalog → Example catalog…** in **Settings → Applications**. The same file is [`catalogs/artcraft.toml`](catalogs/artcraft.toml), also
 attached to each release, if you want to read it or use it as a model for your own.
 
 - **You see a preview first.** Importing only adds apps to your library as cards. Nothing
@@ -193,12 +190,18 @@ imports the rest. A file that is not a proper catalog adds nothing at all.
 
 ## Settings
 
-Open **Settings** (top right). The sections are:
+Open **Settings** (the cog at the top right). The sections are:
 
 - **General**: Appearance, whether closing the window keeps AppGlider in the tray, how often
   to check for updates, and whether to show update notifications.
-- **Applications**: GitHub status and the **Repositories…** manager.
+- **Applications**: a list of your apps with their update channel and build. Choose one to
+  change its **Updates** (stable only or with previews), **Build variant** and icon, or to
+  remove it; use **‹ Applications** to go back. **+ Add repository** opens a page where you
+  paste a GitHub address and choose **Inspect repository** (or press Enter) before
+  **Add to library**. The **Catalog** menu imports and exports lists. These pages save
+  immediately, so they show **Close** instead of Save and Cancel.
 - **Storage**: the folder new apps are installed into.
+- **GitHub**: how many requests GitHub reports as remaining (no requests are made).
 - **About**: the version and project links (the version number at the bottom right opens
   it).
 
@@ -239,8 +242,7 @@ own entry is removed too, so no dead entry is left behind.
 
 **⋯ → Uninstall…** removes the app and its menu entries. Your documents and the app's
 own settings stay. You cannot uninstall an app while it is running. To remove an app from
-the list as well, uninstall it first, then remove it in **Settings → Applications →
-Repositories…**.
+the list as well, uninstall it first, then remove it in **Settings → Applications**.
 
 ## If something goes wrong
 
