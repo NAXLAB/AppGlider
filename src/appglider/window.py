@@ -1,6 +1,7 @@
 """Card library, installed applications and background installation controls."""
 
-from collections.abc import Callable
+import json
+from collections.abc import Callable, Iterable
 from datetime import datetime
 from pathlib import Path
 from threading import Event
@@ -115,6 +116,14 @@ CHECK_INTERVALS = (
     ("Only when I choose", 0),
 )
 DEFAULT_CHECK_HOURS = 6
+SORT_CHOICES = (
+    ("Name (A–Z)", "name"),
+    ("Installed first", "installed"),
+    ("Updates first", "updates"),
+    ("Order added", "added"),
+)
+DEFAULT_SORT = "name"
+MAX_PINNED = 100
 SYSTEM_THEME = "System"
 THEME_CHOICES = [SYSTEM_THEME, *THEMES]
 
@@ -126,6 +135,22 @@ def check_interval_hours(settings: QSettings) -> int:
     except ValueError:
         return DEFAULT_CHECK_HOURS
     return hours if hours in {value for _, value in CHECK_INTERVALS} else DEFAULT_CHECK_HOURS
+
+
+def sort_mode(settings: QSettings) -> str:
+    value = str(settings.value("library/sort", DEFAULT_SORT))
+    return value if value in {mode for _, mode in SORT_CHOICES} else DEFAULT_SORT
+
+
+def pinned_apps(settings: QSettings) -> set[str]:
+    """Ids of the apps the user pinned to the top; anything unreadable counts as none."""
+    try:
+        data = json.loads(str(settings.value("library/pinned", "[]")))
+    except ValueError:
+        return set()
+    if not isinstance(data, list) or not all(isinstance(item, str) for item in data):
+        return set()
+    return {item for item in data if len(item) <= 256}
 
 
 def blend_colours(top: QColor, bottom: QColor, weight: float) -> str:
@@ -145,6 +170,7 @@ class AppCard(QFrame):
     rollback_requested = Signal(str)
     remove_requested = Signal(str)
     preferences_requested = Signal(str)
+    pin_requested = Signal(str)
     build_requested = Signal(str)
 
     def __init__(self, app: App, icon_path: Path | None = None) -> None:
@@ -165,6 +191,8 @@ class AppCard(QFrame):
         identity = QVBoxLayout()
         identity.setSpacing(3)
         name = QPushButton(app.name)
+        self.name_button = name
+        self.pinned = False
         name.setObjectName("appName")
         name.setAccessibleName(f"View {app.name} details")
         name.setToolTip(app.name)
@@ -197,6 +225,8 @@ class AppCard(QFrame):
         menu.addAction("Open repository").triggered.connect(
             lambda: QDesktopServices.openUrl(QUrl(app.source_url))
         )
+        self.pin_action = menu.addAction("Pin to top")
+        self.pin_action.triggered.connect(lambda: self.pin_requested.emit(app.id))
         self.preferences_action = menu.addAction("Application preferences…")
         self.preferences_action.triggered.connect(lambda: self.preferences_requested.emit(app.id))
         menu.addSeparator()
@@ -246,6 +276,16 @@ class AppCard(QFrame):
             self.build_requested.emit(self.app.id)
         else:
             self.install_requested.emit(self.app.id)
+
+    def set_pinned(self, pinned: bool) -> None:
+        if pinned == self.pinned:
+            return
+        self.pinned = pinned
+        self.name_button.setText(f"★ {self.app.name}" if pinned else self.app.name)
+        self.name_button.setAccessibleName(
+            f"View {self.app.name} details" + (", pinned to the top" if pinned else "")
+        )
+        self.pin_action.setText("Unpin" if pinned else "Pin to top")
 
     def set_state(
         self,
@@ -774,6 +814,7 @@ class LauncherWindow(QMainWindow):
         )
         self.installed: dict[str, Installed] = {}
         self.apps: tuple[App, ...] = ()
+        self.pinned = pinned_apps(self.settings)
         self.releases: dict[str, Release] = {}
         self.check_errors: dict[str, str] = {}
         self.release_infos: dict[str, ReleaseInfo] = {}
@@ -846,6 +887,17 @@ class LauncherWindow(QMainWindow):
             self.tabs.addTab(name)
         navigation.addWidget(self.tabs)
         navigation.addStretch()
+        self.sort_combo = QComboBox()
+        self.sort_combo.setItemDelegate(QStyledItemDelegate(self.sort_combo))
+        self.sort_combo.setAccessibleName("Sort apps")
+        self.sort_combo.setToolTip(
+            "Choose how the apps are ordered. Pinned apps always come first."
+        )
+        for label, mode in SORT_CHOICES:
+            self.sort_combo.addItem(f"Sort: {label}", mode)
+        self.sort_combo.setCurrentIndex(max(0, self.sort_combo.findData(sort_mode(self.settings))))
+        self.sort_combo.currentIndexChanged.connect(self.sort_changed)
+        navigation.addWidget(self.sort_combo)
         self.update_all_button = QPushButton("Update all")
         self.update_all_button.clicked.connect(self.update_all)
         navigation.addWidget(self.update_all_button)
@@ -1008,8 +1060,38 @@ class LauncherWindow(QMainWindow):
         card.rollback_requested.connect(self.rollback_app)
         card.remove_requested.connect(self.remove_app)
         card.preferences_requested.connect(lambda app_id: self.open_repositories(app_id=app_id))
+        card.pin_requested.connect(self.toggle_pin)
         card.build_requested.connect(self.choose_build)
         return card
+
+    def sorted_apps(self, apps: Iterable[App]) -> list[App]:
+        """Pinned apps first, then the chosen order; ties keep the order they were added in."""
+        mode = sort_mode(self.settings)
+        order = {app.id: index for index, app in enumerate(self.apps)}
+
+        def key(app: App) -> tuple[object, ...]:
+            installed = app.id in self.installed
+            tail: tuple[object, ...] = {
+                "name": (app.name.casefold(),),
+                "installed": (not installed, app.name.casefold()),
+                "updates": (not self.has_update(app.id), not installed, app.name.casefold()),
+                "added": (),
+            }[mode]
+            return (app.id not in self.pinned, *tail, order.get(app.id, 0))
+
+        return sorted(apps, key=key)
+
+    def sort_changed(self) -> None:
+        self.settings.setValue("library/sort", self.sort_combo.currentData())
+        self.refresh()
+
+    def toggle_pin(self, app_id: str) -> None:
+        if app_id in self.pinned:
+            self.pinned.discard(app_id)
+        elif len(self.pinned) < MAX_PINNED:
+            self.pinned.add(app_id)
+        self.settings.setValue("library/pinned", json.dumps(sorted(self.pinned)))
+        self.refresh()
 
     def show_launcher(self) -> None:
         if self.isMinimized():
@@ -1048,7 +1130,8 @@ class LauncherWindow(QMainWindow):
             self.tray.setIcon(self.tray_icons[int(self.tray_has_updates)])
         self.tray_check_action.setEnabled(not self.checks.busy and bool(self.installed))
         tray_apps = [
-            (app, self.library.icon_path(app)) for app in self.apps if app.id in self.installed
+            (app, self.library.icon_path(app))
+            for app in self.sorted_apps(app for app in self.apps if app.id in self.installed)
         ]
         tray_key = [(app.id, app.name, path, file_stamp(path)) for app, path in tray_apps]
         if tray_key != self.tray_key:
@@ -1071,9 +1154,11 @@ class LauncherWindow(QMainWindow):
             )
             and query in f"{app.name} {app.description} {app.repo}".casefold()
         ]
+        visible = self.sorted_apps(visible)
         ids = {app.id for app in visible}
         for app_id, card in self.cards.items():
             card.icon.setPixmap(icon_pixmap(self.library.icon_path(card.app), 40))
+            card.set_pinned(app_id in self.pinned)
             card.set_state(
                 self.installed.get(app_id),
                 self.releases.get(app_id),

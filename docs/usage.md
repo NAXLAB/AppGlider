@@ -36,8 +36,14 @@ The numbers always show your whole library, even while you are searching. The se
 matches names, descriptions and repository names.
 
 Each app is a card. Click an app's name to open its details, where you can see its other
-releases. The **⋯** menu on a card has Application preferences, Roll back to previous
-version, Uninstall and the menu-shortcut repair.
+releases. The **⋯** menu on a card has Pin to top, Application preferences, Roll back to
+previous version, Uninstall and the menu-shortcut repair.
+
+**Sorting and pinning.** The **Sort** box above the cards orders them by name (the default),
+installed apps first, apps with updates first, or the order you added them. **⋯ → Pin to
+top** puts an app at the front whatever the sort (it gets a ★ in front of its name), and
+**Unpin** puts it back. AppGlider remembers both. The tray menu's list of installed apps
+follows the same order.
 
 ## Adding apps
 

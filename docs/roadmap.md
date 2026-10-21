@@ -14,15 +14,17 @@ change after discussion. Something being listed here is not a promise that it wi
 
 ## Under discussion
 
-- **Arranging and hiding cards:** hide apps you do not use and put the rest in your own
-  order. Still to decide: drag and drop or buttons, how a custom order works with search and
-  the tabs, how to bring a hidden app back, and keyboard use. Hiding an app would never
-  remove it or its installed files.
+- **Moving cards by hand and hiding apps:** sorting and pinning are done. Dragging cards into
+  your own order, or hiding an app without removing it, would need more work and only makes
+  sense if people ask for it. Removing an app from the list and adding it again with a
+  catalog already covers most of "hide".
 - **Desktop notification for updates:** a pop-up message when a new update appears. The
   tray badge and tooltip already show waiting updates; a notification would be optional.
 
 ## Done
 
+- **Sorting and pinning:** a **Sort** box (name, installed first, updates first, order added)
+  and **Pin to top** on each card, remembered between runs.
 - **Example catalog built in:** an **Example catalog** button on the welcome screen and in the
   Repositories window adds the ArtCraft apps and SolidCraft without downloading anything.
 - **Cheaper update checks:** checking an app that has not changed now asks GitHub's ordinary

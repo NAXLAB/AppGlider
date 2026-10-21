@@ -192,6 +192,10 @@ Library and settings changes are written atomically, so a crash cannot leave a h
 file. A corrupt file is preserved and reported, never overwritten with an empty library.
 Only one AppGlider runs per data folder; starting it again raises the running window.
 
+Choices such as the Appearance, update schedule, sort order (`library/sort`) and pinned apps
+(`library/pinned`, a JSON list of app identifiers) live in the settings file. Unreadable or
+unknown values fall back to the defaults instead of causing an error.
+
 ## Menu entries
 
 - AppGlider writes `appglider.desktop` for itself and `appglider-<app>.desktop` for each

@@ -1,6 +1,7 @@
 """Exercise the actual Qt widgets without network or installation side effects."""
 
 import io
+import json
 import os
 import tempfile
 import time
@@ -41,7 +42,14 @@ from appglider.release_info import ReleaseInfo, ReleaseOption, info_path
 from appglider.releases import Release
 from appglider.repositories_dialog import RepositoriesDialog
 from appglider.storage import atomic_json
-from appglider.window import DetailsDialog, LauncherWindow, OrphansDialog, SettingsDialog
+from appglider.window import (
+    DetailsDialog,
+    LauncherWindow,
+    OrphansDialog,
+    SettingsDialog,
+    pinned_apps,
+    sort_mode,
+)
 
 
 class LibraryTests(unittest.TestCase):
@@ -240,6 +248,112 @@ class LibraryTests(unittest.TestCase):
         self.assertEqual(len(calls), 1)
         self.assertTrue(calls[0]["force"])
         self.assertFalse(calls[0].get("cheap", False))
+
+    def shown(self) -> list[str]:
+        return [card.app.id for card in self.window.grid.cards]
+
+    def choose_sort(self, mode: str) -> None:
+        self.window.sort_combo.setCurrentIndex(self.window.sort_combo.findData(mode))
+
+    def test_apps_are_sorted_by_name_by_default_and_the_choice_is_remembered(self) -> None:
+        names = [app.name.casefold() for app in sorted(APPS, key=lambda a: a.name.casefold())]
+        self.assertEqual(
+            [self.window.cards[app_id].app.name.casefold() for app_id in self.shown()], names
+        )
+        self.assertEqual(
+            [self.window.sort_combo.itemText(i) for i in range(self.window.sort_combo.count())],
+            [
+                "Sort: Name (A–Z)",
+                "Sort: Installed first",
+                "Sort: Updates first",
+                "Sort: Order added",
+            ],
+        )
+        self.choose_sort("added")
+        self.assertEqual(self.shown(), [app.id for app in APPS])  # the order they were added in
+        self.assertEqual(self.settings.value("library/sort"), "added")
+        self.settings.sync()
+        reopened = QSettings(self.settings.fileName(), QSettings.Format.IniFormat)
+        self.assertEqual(sort_mode(reopened), "added")
+        for garbage in ("sideways", "", "Name"):
+            reopened.setValue("library/sort", garbage)
+            self.assertEqual(sort_mode(reopened), "name")
+
+    def test_installed_and_updates_first_orders(self) -> None:
+        window = self.window
+        payload = appimage_bytes()
+        other = APPS[3]  # LightCraft, not at the front in any order
+        for app in (APP, other):
+            with patch("appglider.releases.request", return_value=io.BytesIO(payload)):
+                window.library.install(
+                    app,
+                    replace(release_for("1.0.0", payload), name=f"{app.id}-1.0.0.AppImage"),
+                    Event(),
+                    lambda *args: None,
+                )
+        window.releases[other.id] = Release("1.1.0", "x", "x", 1, "0" * 64)
+        window.scan_installed()
+        self.choose_sort("installed")
+        installed = self.shown()[:2]
+        self.assertEqual(sorted(installed), sorted([APP.id, other.id]))
+        self.assertEqual(
+            installed, sorted(installed, key=lambda i: window.cards[i].app.name.casefold())
+        )
+        self.choose_sort("updates")
+        self.assertEqual(self.shown()[:2], [other.id, APP.id])  # the update, then the rest
+
+    def test_pinned_apps_come_first_in_every_order_and_persist(self) -> None:
+        window = self.window
+        target = APPS[5]
+        card = window.cards[target.id]
+        self.assertEqual(card.pin_action.text(), "Pin to top")
+        card.pin_action.trigger()
+        self.assertEqual(self.shown()[0], target.id)
+        self.assertEqual(card.pin_action.text(), "Unpin")
+        self.assertEqual(card.name_button.text(), f"★ {target.name}")
+        self.assertIn("pinned", card.name_button.accessibleName())
+        for mode in ("name", "installed", "updates", "added"):
+            with self.subTest(mode=mode):
+                self.choose_sort(mode)
+                self.assertEqual(self.shown()[0], target.id)
+        self.assertEqual(json.loads(self.settings.value("library/pinned")), [target.id])
+        self.settings.sync()
+        reopened = QSettings(self.settings.fileName(), QSettings.Format.IniFormat)
+        self.assertEqual(pinned_apps(reopened), {target.id})
+        card.pin_action.trigger()  # unpin
+        self.assertEqual(card.name_button.text(), target.name)
+        self.assertEqual(card.pin_action.text(), "Pin to top")
+        self.assertEqual(window.pinned, set())
+
+    def test_pinning_still_works_with_search_and_the_tray_menu_follows_the_order(self) -> None:
+        window = self.window
+        payload = appimage_bytes()
+        for app in (APP, APPS[3]):
+            with patch("appglider.releases.request", return_value=io.BytesIO(payload)):
+                window.library.install(
+                    app,
+                    replace(release_for("1.0.0", payload), name=f"{app.id}-1.0.0.AppImage"),
+                    Event(),
+                    lambda *args: None,
+                )
+        window.scan_installed()
+        window.toggle_pin(APPS[3].id)
+        self.assertEqual(
+            [action.text() for action in window.tray_apps_menu.actions()],
+            [APPS[3].name, APP.name],
+        )
+        window.search.setText("craft")
+        self.assertEqual(self.shown()[0], APPS[3].id)
+        window.search.setText(APP.name)
+        self.assertEqual(self.shown(), [APP.id])
+
+    def test_unreadable_pinned_settings_mean_nothing_is_pinned(self) -> None:
+        for garbage in ("not json", "{}", "[1, 2]", '["a", 3]', "", "null"):
+            with self.subTest(garbage=garbage):
+                self.settings.setValue("library/pinned", garbage)
+                self.assertEqual(pinned_apps(self.settings), set())
+        self.settings.setValue("library/pinned", json.dumps(["a", "b", "a"]))
+        self.assertEqual(pinned_apps(self.settings), {"a", "b"})
 
     def test_update_check_interval_defaults_to_six_hours_and_saves(self) -> None:
         self.assertEqual(self.window.update_timer.interval(), 6 * 3600 * 1000)

@@ -23,6 +23,7 @@ when a new version is out.
 - Keeps the previous version so you can roll back if an update misbehaves.
 - Lets you choose stable releases only, or try previews, for each app.
 - Adds a menu entry for each app it installs and can sit in your system tray.
+- Sorts your apps and lets you pin favourites to the top.
 - Shares lists of apps as plain text files you can read, edit and import
   (see [catalogs](docs/usage.md#catalogs-sharing-a-list-of-apps)).
 - Follows your desktop's colours, or pick Light, Dark or one of three coloured themes.
