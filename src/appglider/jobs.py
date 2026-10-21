@@ -6,9 +6,9 @@ from threading import Event
 
 from PySide6.QtCore import QObject, QRunnable, Signal
 
-from appharbour.icons import IconCandidate
-from appharbour.release_info import ReleaseInfo
-from appharbour.releases import BuildChoiceRequired, Cancelled, Progress, Release
+from appglider.icons import IconCandidate
+from appglider.release_info import ReleaseInfo
+from appglider.releases import BuildChoiceRequired, Cancelled, Progress, Release
 
 
 @dataclass

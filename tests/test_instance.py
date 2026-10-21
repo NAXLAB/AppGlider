@@ -7,7 +7,7 @@ from pathlib import Path
 from PySide6.QtCore import QCoreApplication
 from PySide6.QtTest import QTest
 
-from appharbour.instance import SingleInstance
+from appglider.instance import SingleInstance
 
 
 class SingleInstanceTests(unittest.TestCase):

@@ -3,7 +3,7 @@
 ## Layout
 
 ```text
-src/appharbour/   Application code, icons and asset licences
+src/appglider/   Application code, icons and asset licences
 tests/           Automated application tests
 packaging/       AppImage scripts, entry point and dependency locks
 .github/         GitHub Actions workflow
@@ -27,7 +27,7 @@ Use Python 3.11 or newer on a Linux desktop:
 ```sh
 python3 -m venv .venv
 .venv/bin/python -m pip install -e '.[dev]'
-.venv/bin/python -O -m appharbour
+.venv/bin/python -O -m appglider
 ```
 
 ## Checks
@@ -52,13 +52,13 @@ build/packaging-env/bin/python -m pip install -r packaging/build-requirements.tx
 build/packaging-env/bin/python packaging/build_appimage.py
 ```
 
-Output goes to `dist/`: `AppHarbour-<version>-linux-x86_64.AppImage` and `SHA256SUMS.txt`.
+Output goes to `dist/`: `AppGlider-<version>-linux-x86_64.AppImage` and `SHA256SUMS.txt`.
 The version comes from `pyproject.toml`.
 
 Test the package without FUSE, using a disposable first-run home:
 
 ```sh
-python3 packaging/smoke_test.py dist/AppHarbour-0.3.0-linux-x86_64.AppImage
+python3 packaging/smoke_test.py dist/AppGlider-0.4.0-linux-x86_64.AppImage
 ```
 
 Verify its checksum from inside `dist/` with `sha256sum -c SHA256SUMS.txt`.

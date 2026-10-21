@@ -13,9 +13,9 @@ from urllib.parse import quote
 from test_library import APP, appimage_bytes, release_for
 from test_releases import Response, public_assets
 
-from appharbour import releases
-from appharbour.catalog import APPS, custom_app
-from appharbour.storage import atomic_json
+from appglider import releases
+from appglider.catalog import APPS, custom_app
+from appglider.storage import atomic_json
 
 
 class DiscoveryTests(unittest.TestCase):

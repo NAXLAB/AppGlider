@@ -22,15 +22,15 @@ from PySide6.QtWidgets import QApplication, QMessageBox
 from test_builds import BAMBU, bambu_metadata, chosen_bambu
 from test_library import appimage_bytes
 
-from appharbour import APP_ICON, releases
-from appharbour.catalog import APPS, custom_app, load_apps
-from appharbour.icons import IconCandidate, normalise_icon
-from appharbour.jobs import TaskResult
-from appharbour.library import Library
-from appharbour.release_info import ReleaseInfo, ReleaseOption, discover_releases
-from appharbour.releases import Release, architecture, check_cancel, select_release
-from appharbour.repositories_dialog import RepositoriesDialog
-from appharbour.window import LauncherWindow, SettingsDialog
+from appglider import APP_ICON, releases
+from appglider.catalog import APPS, custom_app, load_apps
+from appglider.icons import IconCandidate, normalise_icon
+from appglider.jobs import TaskResult
+from appglider.library import Library
+from appglider.release_info import ReleaseInfo, ReleaseOption, discover_releases
+from appglider.releases import Release, architecture, check_cancel, select_release
+from appglider.repositories_dialog import RepositoriesDialog
+from appglider.window import LauncherWindow, SettingsDialog
 
 CUSTOM = custom_app("https://github.com/emmertex/lightcraft-classic", "LightCraft Classic")
 
@@ -56,7 +56,7 @@ class CatalogTests(unittest.TestCase):
 
     def install(self, version):
         payload = appimage_bytes(version.encode())
-        with patch("appharbour.releases.request", return_value=io.BytesIO(payload)):
+        with patch("appglider.releases.request", return_value=io.BytesIO(payload)):
             return self.library.install(
                 CUSTOM, custom_release(version, payload), Event(), lambda *a: None
             )
@@ -143,7 +143,7 @@ class CatalogTests(unittest.TestCase):
         self.library.add_repository(CUSTOM)
         path = self.library.data_dir / "repositories.json"
         original = path.read_bytes()
-        with patch("appharbour.storage.os.replace", side_effect=OSError("Disk full")):
+        with patch("appglider.storage.os.replace", side_effect=OSError("Disk full")):
             with self.assertRaises(OSError):
                 self.library.add_repository(custom_app("other/another-app"))
         self.assertEqual(path.read_bytes(), original)
@@ -156,14 +156,14 @@ class CatalogTests(unittest.TestCase):
         second = self.install("0.9.4")
         self.assertNotEqual(first.path, second.path)
         self.assertEqual(second.path.parent.parent.name, CUSTOM.id)
-        self.assertTrue((second.path.parent.parent / ".appharbour").is_file())
+        self.assertTrue((second.path.parent.parent / ".appglider").is_file())
         with self.assertRaisesRegex(ValueError, "Uninstall"):
             self.library.remove_repository(CUSTOM.id)
         self.library.rollback(CUSTOM)
         reopened = Library(self.library.data_dir, self.library.apps_dir, self.library.desktop_dir)
         self.assertEqual(reopened.scan()[CUSTOM.id].path, first.path)
-        shortcut = self.library.desktop_dir / f"appharbour-{CUSTOM.id}.desktop"
-        self.assertIn("LightCraft Classic (AppHarbour)", shortcut.read_text())
+        shortcut = self.library.desktop_dir / f"appglider-{CUSTOM.id}.desktop"
+        self.assertIn("LightCraft Classic (AppGlider)", shortcut.read_text())
         self.library.remove(CUSTOM)
         self.library.remove_repository(CUSTOM.id)
         self.assertEqual(reopened.scan(), {})
@@ -208,7 +208,7 @@ class RepositoryGuiTests(unittest.TestCase):
         self.root = Path(self.temp.name)
         self.library = Library(self.root / "data", self.root / "apps", self.root / "desktop")
         self.settings = QSettings(str(self.root / "settings.ini"), QSettings.Format.IniFormat)
-        icons = patch("appharbour.repositories_dialog.discover_icons", return_value=())
+        icons = patch("appglider.repositories_dialog.discover_icons", return_value=())
         icons.start()
         self.addCleanup(icons.stop)
         self.settings.setValue("appearance/theme", "Light")
@@ -234,7 +234,7 @@ class RepositoryGuiTests(unittest.TestCase):
         self.dialog.url.setText(CUSTOM.source_url)
         self.dialog.name.setText(CUSTOM.name)
         with patch(
-            "appharbour.repositories_dialog.latest_release", return_value=custom_release()
+            "appglider.repositories_dialog.latest_release", return_value=custom_release()
         ) as latest:
             QTest.mouseClick(self.dialog.inspect_button, Qt.MouseButton.LeftButton)
             self.wait_for_task(self.dialog)
@@ -362,7 +362,7 @@ class RepositoryGuiTests(unittest.TestCase):
         self.assertIsNone(self.dialog.release)
         for address in ("https://evil.test/a/b", APPS[0].source_url):
             self.dialog.url.setText(address)
-            with patch("appharbour.repositories_dialog.latest_release") as latest:
+            with patch("appglider.repositories_dialog.latest_release") as latest:
                 self.dialog.inspect_repository()
                 latest.assert_not_called()
             self.assertIsNone(self.dialog.task)
@@ -371,7 +371,7 @@ class RepositoryGuiTests(unittest.TestCase):
     def test_missing_appimage_or_checksum_is_reported_without_saving(self):
         self.dialog.url.setText(CUSTOM.source_url)
         with patch(
-            "appharbour.repositories_dialog.latest_release",
+            "appglider.repositories_dialog.latest_release",
             side_effect=ValueError("No published SHA-256 checksum"),
         ):
             self.dialog.inspect_repository()
@@ -390,7 +390,7 @@ class RepositoryGuiTests(unittest.TestCase):
             b'<path d="M0 0H32V32H0Z" fill="blue"/></svg>'
         )
         choices = (IconCandidate("assets/red.svg", first), IconCandidate("assets/blue.svg", second))
-        with patch("appharbour.repositories_dialog.discover_icons", return_value=choices):
+        with patch("appglider.repositories_dialog.discover_icons", return_value=choices):
             self.inspect()
         self.assertFalse(self.dialog.icon_preview.pixmap().isNull())
         self.dialog.icon_choices.setCurrentIndex(1)
@@ -402,15 +402,15 @@ class RepositoryGuiTests(unittest.TestCase):
             self.window.cards[CUSTOM.id].icon.pixmap().toImage().pixelColor(0, 0).name(), "#0000ff"
         )
         payload = appimage_bytes()
-        with patch("appharbour.releases.request", return_value=io.BytesIO(payload)):
+        with patch("appglider.releases.request", return_value=io.BytesIO(payload)):
             self.library.install(CUSTOM, custom_release(payload=payload), Event(), lambda *a: None)
         self.window.scan_installed()
-        shortcut = self.library.desktop_dir / f"appharbour-{CUSTOM.id}.desktop"
+        shortcut = self.library.desktop_dir / f"appglider-{CUSTOM.id}.desktop"
         self.assertIn(f"Icon={cached}", shortcut.read_text())
         self.assertEqual(cached.read_bytes(), second)
         self.assertFalse(self.window.tray_apps_menu.actions()[0].icon().isNull())
         self.select_custom()
-        with patch("appharbour.repositories_dialog.discover_icons", return_value=(choices[0],)):
+        with patch("appglider.repositories_dialog.discover_icons", return_value=(choices[0],)):
             self.dialog.find_existing_icons()
             self.wait_for_task(self.dialog)
         self.assertEqual(cached.read_bytes(), first)
@@ -423,9 +423,7 @@ class RepositoryGuiTests(unittest.TestCase):
         )
 
     def test_icon_lookup_failure_still_allows_add_and_local_choice_for_existing_repo(self):
-        with patch(
-            "appharbour.repositories_dialog.discover_icons", side_effect=ValueError("quota")
-        ):
+        with patch("appglider.repositories_dialog.discover_icons", side_effect=ValueError("quota")):
             self.inspect()
         self.dialog.add_repository()
         self.assertIn(CUSTOM, self.library.apps)
@@ -434,7 +432,7 @@ class RepositoryGuiTests(unittest.TestCase):
         image = self.root / "a local icon.png"
         image.write_bytes(png)
         with patch(
-            "appharbour.repositories_dialog.QFileDialog.getOpenFileName",
+            "appglider.repositories_dialog.QFileDialog.getOpenFileName",
             return_value=(str(image), ""),
         ):
             self.dialog.choose_icon()
@@ -442,7 +440,7 @@ class RepositoryGuiTests(unittest.TestCase):
         saved = cached.read_bytes()
         image.write_bytes(b"broken PNG")
         with patch(
-            "appharbour.repositories_dialog.QFileDialog.getOpenFileName",
+            "appglider.repositories_dialog.QFileDialog.getOpenFileName",
             return_value=(str(image), ""),
         ):
             self.dialog.choose_icon()
@@ -455,7 +453,7 @@ class RepositoryGuiTests(unittest.TestCase):
             with (
                 self.subTest(outcome=outcome),
                 patch(
-                    "appharbour.repositories_dialog.discover_icons",
+                    "appglider.repositories_dialog.discover_icons",
                     side_effect=outcome if isinstance(outcome, Exception) else None,
                     return_value=outcome,
                 ),
@@ -469,8 +467,8 @@ class RepositoryGuiTests(unittest.TestCase):
         entries = [bambu_metadata(), bambu_metadata("02.09.00.12", preview=True)]
         with (
             patch.object(releases, "api_entries", return_value=entries),
-            patch("appharbour.repositories_dialog.discover_icons", return_value=()),
-            patch("appharbour.library.download") as download,
+            patch("appglider.repositories_dialog.discover_icons", return_value=()),
+            patch("appglider.library.download") as download,
         ):
             self.dialog.start_add_repository()
             self.dialog.url.setText(BAMBU.source_url)
@@ -541,7 +539,7 @@ class RepositoryGuiTests(unittest.TestCase):
         with (
             patch.object(releases, "api_entries", return_value=[bambu_metadata(), preview]),
             patch(
-                "appharbour.repositories_dialog.discover_icons",
+                "appglider.repositories_dialog.discover_icons",
                 side_effect=[icons, releases.RateLimited("api.github.com", 1)],
             ) as discover,
         ):
@@ -574,14 +572,14 @@ class RepositoryGuiTests(unittest.TestCase):
         png = normalise_icon(APP_ICON.read_bytes())
         choices = (IconCandidate("repository.png", png),)
         with patch(
-            "appharbour.repositories_dialog.discover_icons", return_value=choices
+            "appglider.repositories_dialog.discover_icons", return_value=choices
         ) as discover:
             self.inspect()
             self.dialog.icon_choices.setCurrentIndex(1)
             self.assertIsNone(self.dialog.selected_icon)
             self.dialog.release_channel.setCurrentIndex(1)
             with patch(
-                "appharbour.repositories_dialog.latest_release", return_value=custom_release()
+                "appglider.repositories_dialog.latest_release", return_value=custom_release()
             ):
                 self.dialog.inspect_repository()
                 self.wait_for_task(self.dialog)
@@ -590,13 +588,13 @@ class RepositoryGuiTests(unittest.TestCase):
             image = self.root / "local.png"
             image.write_bytes(png)
             with patch(
-                "appharbour.repositories_dialog.QFileDialog.getOpenFileName",
+                "appglider.repositories_dialog.QFileDialog.getOpenFileName",
                 return_value=(str(image), ""),
             ):
                 self.dialog.choose_icon()
             self.dialog.release_channel.setCurrentIndex(0)
             with patch(
-                "appharbour.repositories_dialog.latest_release", return_value=custom_release()
+                "appglider.repositories_dialog.latest_release", return_value=custom_release()
             ):
                 self.dialog.inspect_repository()
                 self.wait_for_task(self.dialog)
@@ -610,7 +608,7 @@ class RepositoryGuiTests(unittest.TestCase):
     def test_failed_icon_lookup_explains_fallback_and_can_be_retried(self):
         icon = IconCandidate("application.png", normalise_icon(APP_ICON.read_bytes()))
         with patch(
-            "appharbour.repositories_dialog.discover_icons",
+            "appglider.repositories_dialog.discover_icons",
             side_effect=[ValueError("request limit reached"), (icon,)],
         ) as discover:
             self.inspect()
@@ -618,7 +616,7 @@ class RepositoryGuiTests(unittest.TestCase):
             self.assertIn("default icon", self.dialog.status.text())
             self.assertIn("request limit reached", self.dialog.status.text())
             with patch(
-                "appharbour.repositories_dialog.latest_release", return_value=custom_release()
+                "appglider.repositories_dialog.latest_release", return_value=custom_release()
             ):
                 self.dialog.inspect_repository()
                 self.wait_for_task(self.dialog)
@@ -632,7 +630,7 @@ class RepositoryGuiTests(unittest.TestCase):
         with (
             patch.object(releases, "api_entries", return_value=[bambu_metadata()]),
             patch.object(self.window, "choose_build") as choose,
-            patch("appharbour.library.download") as download,
+            patch("appglider.library.download") as download,
         ):
             self.window.install_app(BAMBU.id)
             self.wait_for_task(self.window)
@@ -658,7 +656,7 @@ class RepositoryGuiTests(unittest.TestCase):
             self.window.scan_installed()
             with (
                 self.subTest(failed=failed),
-                patch("appharbour.window.QThreadPool.globalInstance") as pool,
+                patch("appglider.window.QThreadPool.globalInstance") as pool,
             ):
                 self.window.checks.add([selected.id])
                 self.library.set_build_variant(selected.id, chosen_bambu(index=0).build_variant)
@@ -724,7 +722,7 @@ class RepositoryGuiTests(unittest.TestCase):
 
         with (
             patch.object(releases, "api_entries", return_value=entries),
-            patch("appharbour.library.download") as download,
+            patch("appglider.library.download") as download,
         ):
             QTimer.singleShot(0, choose_available_build)
             QTest.mouseClick(card.update_button, Qt.MouseButton.LeftButton)
@@ -749,7 +747,7 @@ class RepositoryGuiTests(unittest.TestCase):
             check_cancel(cancel)
             return custom_release()
 
-        with patch("appharbour.repositories_dialog.latest_release", side_effect=lookup):
+        with patch("appglider.repositories_dialog.latest_release", side_effect=lookup):
             self.dialog.inspect_repository()
             task = self.dialog.task
             self.dialog.reject()
@@ -768,7 +766,7 @@ class RepositoryGuiTests(unittest.TestCase):
             check_cancel(cancel)
             return ()
 
-        with patch("appharbour.repositories_dialog.discover_icons", side_effect=lookup):
+        with patch("appglider.repositories_dialog.discover_icons", side_effect=lookup):
             self.dialog.find_existing_icons()
             task = self.dialog.task
             self.dialog.reject()
@@ -780,7 +778,7 @@ class RepositoryGuiTests(unittest.TestCase):
     def test_icon_save_failure_does_not_undo_repository_addition(self):
         png = normalise_icon(APP_ICON.read_bytes())
         with patch(
-            "appharbour.repositories_dialog.discover_icons",
+            "appglider.repositories_dialog.discover_icons",
             return_value=(IconCandidate("icon.png", png),),
         ):
             self.inspect()
@@ -795,9 +793,9 @@ class RepositoryGuiTests(unittest.TestCase):
         self.dialog.add_repository()
         payload = appimage_bytes()
         with (
-            patch("appharbour.window.latest_release", return_value=custom_release()),
-            patch("appharbour.releases.request", return_value=io.BytesIO(payload)),
-            patch("appharbour.window.QMessageBox.warning") as warning,
+            patch("appglider.window.latest_release", return_value=custom_release()),
+            patch("appglider.releases.request", return_value=io.BytesIO(payload)),
+            patch("appglider.window.QMessageBox.warning") as warning,
         ):
             self.window.install_app(CUSTOM.id)
             self.wait_for_task(self.window)
@@ -813,7 +811,7 @@ class RepositoryGuiTests(unittest.TestCase):
         self.assertIn(CUSTOM, self.library.apps)
         release = custom_release("0.9.5")
         info = ReleaseInfo(ReleaseOption(release.version, release), None, time.time())
-        with patch("appharbour.window.discover_releases", return_value=info) as discover:
+        with patch("appglider.window.discover_releases", return_value=info) as discover:
             self.window.refresh_releases()
             deadline = time.monotonic() + 10
             while self.window.checks.busy and time.monotonic() < deadline:
@@ -824,14 +822,14 @@ class RepositoryGuiTests(unittest.TestCase):
             self.assertEqual(discover.call_args.args[0].id, CUSTOM.id)
         self.assertEqual(self.window.tabs.tabText(2), "Updates (1)")
         with (
-            patch("appharbour.window.latest_release", return_value=custom_release("0.9.5")),
-            patch("appharbour.releases.request", return_value=io.BytesIO(payload)),
+            patch("appglider.window.latest_release", return_value=custom_release("0.9.5")),
+            patch("appglider.releases.request", return_value=io.BytesIO(payload)),
         ):
             self.window.update_all()
             self.wait_for_task(self.window)
         self.assertEqual(self.window.installed[CUSTOM.id].version, "0.9.5")
         with patch(
-            "appharbour.window.QMessageBox.question",
+            "appglider.window.QMessageBox.question",
             return_value=QMessageBox.StandardButton.Yes,
         ):
             self.window.remove_app(CUSTOM.id)
@@ -854,7 +852,7 @@ class RepositoryGuiTests(unittest.TestCase):
                 )
             return beta
 
-        with patch("appharbour.repositories_dialog.latest_release", side_effect=inspect):
+        with patch("appglider.repositories_dialog.latest_release", side_effect=inspect):
             self.dialog.inspect_repository()
             self.wait_for_task(self.dialog)
             self.assertIn("Only prereleases", self.dialog.status.text())
@@ -885,7 +883,7 @@ class RepositoryGuiTests(unittest.TestCase):
         self.dialog.select_icon(self.dialog.icon_choices.count() - 1)
         self.assertIn("Saved icon", self.dialog.status.text())
         beta = replace(custom_release("0.10.0-beta.1"), prerelease=True, is_latest=False)
-        with patch("appharbour.releases.api_release", return_value=beta):
+        with patch("appglider.releases.api_release", return_value=beta):
             self.dialog.inspect_repository()
             self.wait_for_task(self.dialog)
         self.assertEqual(self.window.releases[CUSTOM.id], beta)
@@ -904,7 +902,7 @@ class RepositoryGuiTests(unittest.TestCase):
         self.assertIsNone(self.dialog.icon_target)
         self.assertTrue(self.dialog.remove_button.isHidden())
         self.assertTrue(self.dialog.icon_group.isHidden())
-        with patch("appharbour.repositories_dialog.latest_release", return_value=custom_release()):
+        with patch("appglider.repositories_dialog.latest_release", return_value=custom_release()):
             self.dialog.inspect_repository()
             self.wait_for_task(self.dialog)
         self.assertIsNone(self.dialog.task)

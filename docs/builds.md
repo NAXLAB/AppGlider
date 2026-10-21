@@ -5,7 +5,7 @@ GitHub Actions runs the automation defined in
 `packaging/build_appimage.py`; it works locally as well as on GitHub.
 
 **CI (continuous integration)** checks changes automatically.
-**CD (continuous delivery)** prepares releases for users. For AppHarbour that means
+**CD (continuous delivery)** prepares releases for users. For AppGlider that means
 producing downloadable AppImages and checksums.
 
 ## Current workflow
@@ -23,7 +23,7 @@ home to check startup, certificates and its shortcut. They upload the AppImage a
 packaging, so pushing a commit and its tag builds the AppImage only once.
 
 Open **Actions → Linux AppImage**, select a successful tag or manual run and download
-**AppHarbour-linux-x86_64** under **Artifacts**. GitHub requires a signed-in
+**AppGlider-linux-x86_64** under **Artifacts**. GitHub requires a signed-in
 account with repository access to download workflow artifacts. Restore the AppImage's
 executable permission with `chmod +x` after downloading.
 
@@ -62,7 +62,7 @@ the job uses GitHub's workflow token.
 Test the AppImage on a real desktop, review the draft's notes, then choose **Publish release**.
 Ordinary branch pushes, pull requests and manual builds do not create releases.
 An existing release for the same tag is not overwritten; creating it again fails.
-Automatic AppHarbour self-updates are separate work.
+Automatic AppGlider self-updates are separate work.
 
 ## References
 

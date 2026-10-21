@@ -1,4 +1,4 @@
-# Using AppHarbour
+# Using AppGlider
 
 ## Library
 
@@ -30,7 +30,7 @@ This explicit check bypasses the request cache. Adding a repository still inspec
 release and published checksum before adding the card. With no installed apps, startup
 makes no release requests and the main and tray refresh actions are disabled.
 
-**⋯ → Uninstall…** removes AppHarbour-owned AppImages and their shortcut. Documents and
+**⋯ → Uninstall…** removes AppGlider-owned AppImages and their shortcut. Documents and
 the application's own settings are preserved. An application cannot be uninstalled while
 its managed version is running.
 
@@ -44,14 +44,14 @@ and cached information. The indicator highlights active request limits.
 
 Opening the panel makes no network requests. Counts come from existing GitHub responses
 and may also be affected by other applications sharing your network. After a request
-window expires, its count becomes unknown until the next API response; AppHarbour does
+window expires, its count becomes unknown until the next API response; AppGlider does
 not assume the full allowance is available. Cached results keep their original check
 time. Failed checks keep the last successful result visible and report the failure
 through the usual operation message. Saved retry times survive restarts; request counts
 are observed again during the next normal API request.
 
 Checks run on startup or when requested; there are no scheduled periodic checks.
-AppHarbour itself is upgraded by replacing its AppImage and
+AppGlider itself is upgraded by replacing its AppImage and
 launching the replacement; it does not currently update itself.
 
 ## Stable and prerelease versions
@@ -86,7 +86,7 @@ than silently choosing an older download. Previews use the same CPU and SHA-256 
 as stable releases. Previews shown in details only qualify as updates when previews
 are enabled for that application. Changing the release preference
 saves your choice without installing anything. GitHub's public-page fallback also respects
-this preference when its API quota is exhausted. If a project only publishes previews, AppHarbour explains
+this preference when its API quota is exhausted. If a project only publishes previews, AppGlider explains
 that previews must be enabled before adding it.
 
 Checked release information is retained across restarts, even after its five-minute
@@ -116,20 +116,20 @@ PNG or self-contained SVG. Adding the repository saves the selected image locall
 To change an existing custom entry's icon, select it in the repository list and use
 **Find icons** or **Choose icon…**. These icon changes save immediately. The selected icon
 appears on its card, details, tray entry and managed-app menu shortcut, and stays available
-offline. Built-in application icons remain bundled with AppHarbour.
+offline. Built-in application icons remain bundled with AppGlider.
 
 Icons are limited to 2 MiB and 4096 pixels per side, then converted to a PNG of at most
 512 pixels per side. SVGs with external resources or document types are rejected.
 Discovery examines a bounded set of likely repository files, so some projects need a
 manual choice. An unavailable icon or GitHub quota error does not prevent adding a valid
-application; AppHarbour's icon is the fallback. Embedded AppImage icons are not extracted.
+application; AppGlider's icon is the fallback. Embedded AppImage icons are not extracted.
 
 Supported release tags include `v1.2.3`, `1.2.3`, `v1.2.3-beta.1`, short versions such as
 `v0.6`, and four-part versions such as Bambu Studio's `v02.08.02.61`. Project prefixes
 such as `studio-v0.6.0`, `release-1.2.3` and `app/v1.2.3` are supported. The original tag
 is kept in download URLs; only its numeric version is used for comparisons. Missing
 patch components compare as zero (`0.6` equals `0.6.0`). Numeric components are compared numerically;
-GitHub's release flags determine whether a release is stable or a preview. AppHarbour inspects
+GitHub's release flags determine whether a release is stable or a preview. AppGlider inspects
 the release's actual assets for filenames ending in `.AppImage`, ignoring letter case. The repository
 name, version placement, separators and word `linux` are not required. Companion files
 such as `.AppImage.zsync` and `.AppImage.asc` are excluded.
@@ -138,7 +138,7 @@ Architecture labels are matched to the host: `x86_64`, `x86-64`, `x64` and `amd6
 identify x86_64; `aarch64` and `arm64` identify ARM64. An explicit match takes priority
 over an unlabelled AppImage. A single unlabelled candidate is allowed; installation
 checks the actual file's CPU architecture and AppImage header before activating it.
-The AppHarbour launcher package currently targets Linux x86_64 only.
+The AppGlider launcher package currently targets Linux x86_64 only.
 
 When several candidates fit, familiar repository-based filenames retain their existing
 preference. If that does not identify one file, a **Build variant** selector appears.
@@ -149,11 +149,11 @@ The choice is remembered separately from **Stable releases only** / **Stable and
 versions** and follows that variant across releases, ignoring version numbers and build dates.
 Use **⋯ → Application preferences… → Build variant → Choose another build…** to change it.
 Details show the selected build and installed filename; full candidate filenames are also
-available as tooltips in the selector. AppHarbour does not detect distribution compatibility:
+available as tooltips in the selector. AppGlider does not detect distribution compatibility:
 choose a build appropriate for your system using the project's guidance.
 
 If the saved variant disappears or becomes ambiguous, an installed card shows **Choose build**.
-AppHarbour keeps the installed copy and waits for an explicit selection instead of switching
+AppGlider keeps the installed copy and waits for an explicit selection instead of switching
 builds. Changing the preference affects future installs and updates; it does not replace
 an installed app immediately. Choosing and inspecting builds does not download AppImages.
 Upstream filename changes can require confirmation too: Bambu Studio's `ubuntu22.04`
@@ -171,18 +171,19 @@ an explanation. No GitHub token is needed.
 
 Settings has General, Applications, Storage and About sections.
 The version button at the bottom right opens About. It highlights on hover or keyboard focus.
-Choose System / Light / Dark appearance and the folder for new installations.
+Choose the Appearance and the folder for new installations. Appearance is System (default,
+your desktop's own colours), Light, Dark, or one of the Forest, Earthy and Sandstone themes.
 Changing the folder leaves existing installations in place; their updates stay with them.
 
-AppHarbour creates its own menu entry. Managed apps get entries such as
-**PhotoCraft (AppHarbour)**. Updates reuse the existing entry, and
+AppGlider creates its own menu entry. Managed apps get entries such as
+**PhotoCraft (AppGlider)**. Updates reuse the existing entry, and
 **⋯ → Create/repair menu shortcut** restores a missing managed-app shortcut.
 
-The AppHarbour entry itself (`appharbour.desktop`) is rewritten only when it is missing,
+The AppGlider entry itself (`appglider.desktop`) is rewritten only when it is missing,
 when its target no longer exists, or when a newer packaged AppImage takes over. Development
 runs do not repoint a working entry.
 
-Only one AppHarbour window runs per user. Starting it again raises the existing window and
+Only one AppGlider window runs per user. Starting it again raises the existing window and
 exits.
 
 If `library.json` contains entries for applications that are not in the current catalog
@@ -191,10 +192,10 @@ If `library.json` contains entries for applications that are not in the current 
 forgotten unless you confirm, and files on disk are never deleted. Unreadable or malformed
 library files are still preserved and reported.
 
-The system tray offers **Open AppHarbour**, **Refresh releases**, installed apps and **Quit**.
+The system tray offers **Open AppGlider**, **Refresh releases**, installed apps and **Quit**.
 Closing the window hides it when a tray is available; downloads continue in the background.
 Turn this off in **Settings → General** if closing should exit.
-Without a working tray, closing exits normally. Use **Quit AppHarbour** to exit from the tray.
+Without a working tray, closing exits normally. Use **Quit AppGlider** to exit from the tray.
 
 Installed applications remain launchable offline. Failed app startup reports a diagnostic
 log path in the launcher. Downloading and checking releases requires network access.

@@ -12,9 +12,9 @@ from threading import Event
 from PySide6.QtCore import QBuffer, QByteArray, QIODevice, QSize, Qt
 from PySide6.QtGui import QImage, QImageReader, QPixmap
 
-from appharbour import APP_ICON
-from appharbour.catalog import App
-from appharbour.releases import RateLimited, check_cancel, read_metadata
+from appglider import APP_ICON
+from appglider.catalog import App
+from appglider.releases import RateLimited, check_cancel, read_metadata
 
 MAX_ICON_BYTES = 2 * 1024 * 1024
 

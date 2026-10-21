@@ -13,8 +13,8 @@ from test_library import APP
 from test_prereleases import metadata, release_list_html
 from test_releases import Response, public_assets
 
-from appharbour import releases
-from appharbour.release_info import cached_info, discover_releases, info_path, remember_release
+from appglider import releases
+from appglider.release_info import cached_info, discover_releases, info_path, remember_release
 
 
 class ReleaseInfoTests(unittest.TestCase):

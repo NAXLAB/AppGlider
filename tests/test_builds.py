@@ -13,10 +13,10 @@ from unittest.mock import patch
 from test_library import appimage_bytes, ignore_progress
 from test_releases import Response, public_assets
 
-from appharbour import releases
-from appharbour.catalog import APPS, custom_app
-from appharbour.library import Library
-from appharbour.release_info import cached_info, discover_releases, info_path
+from appglider import releases
+from appglider.catalog import APPS, custom_app
+from appglider.library import Library
+from appglider.release_info import cached_info, discover_releases, info_path
 
 BAMBU = custom_app("bambulab/BambuStudio", "Bambu Studio")
 
@@ -230,7 +230,7 @@ class BuildTests(unittest.TestCase):
         path = self.library.data_dir / "build-preferences.json"
         before = path.read_bytes()
         with (
-            patch("appharbour.storage.os.replace", side_effect=OSError("disk full")),
+            patch("appglider.storage.os.replace", side_effect=OSError("disk full")),
             self.assertRaises(OSError),
         ):
             self.library.set_build_variant(app.id, app.build_variant)

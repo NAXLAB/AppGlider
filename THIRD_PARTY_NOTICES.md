@@ -1,6 +1,6 @@
 # Bundled runtime notices
 
-AppHarbour's AppImage contains unmodified upstream runtime libraries. Trimming removes
+AppGlider's AppImage contains unmodified upstream runtime libraries. Trimming removes
 unused modules and tools; it does not change the retained libraries. Application artwork
 and its notices are documented separately in `ATTRIBUTION.md`.
 
@@ -8,8 +8,8 @@ and its notices are documented separately in `ATTRIBUTION.md`.
 
 The current package uses Qt, PySide6 Essentials and Shiboken6 **6.12.0**, by The Qt Company
 Ltd. and their contributors, under the **GNU Lesser General Public License version 3**.
-The licence texts are included in `src/appharbour/assets/licenses/LGPL-3.0-only.txt` and
-`GPL-3.0-only.txt` in the source repository, and in the installed `appharbour/assets/licenses/`
+The licence texts are included in `src/appglider/assets/licenses/LGPL-3.0-only.txt` and
+`GPL-3.0-only.txt` in the source repository, and in the installed `appglider/assets/licenses/`
 directory inside the AppImage.
 
 Corresponding upstream source and build instructions are available from:
@@ -26,14 +26,14 @@ including reverse engineering to debug those modifications, under the applicable
 To use replacement libraries, extract the AppImage into a writable directory:
 
 ```sh
-./AppHarbour-0.3.0-linux-x86_64.AppImage --appimage-extract
+./AppGlider-0.4.0-linux-x86_64.AppImage --appimage-extract
 ./squashfs-root/AppRun
 ```
 
 Replace compatible libraries in
 `squashfs-root/opt/python3.13/lib/python3.13/site-packages/PySide6/` and, when needed,
 `shiboken6/`, then run `AppRun` again. The `Qt/lib/` and `Qt/plugins/` subdirectories hold
-Qt's shared libraries and desktop plugins. Rebuild AppHarbour with the packaging scripts
+Qt's shared libraries and desktop plugins. Rebuild AppGlider with the packaging scripts
 to create a new AppImage containing your replacements. No signature or licence check
 prevents running the extracted application with modified libraries.
 
@@ -43,14 +43,14 @@ prevents running the extracted application with modified libraries.
   preserved at `opt/python3.13/lib/python3.13/LICENSE.txt` inside the AppImage.
   [Source](https://www.python.org/ftp/python/3.13.16/Python-3.13.16.tar.xz).
 - **ICU 73.2:** Unicode, Inc. and contributors; Unicode/ICU and third-party notices are
-  included in `appharbour/assets/licenses/ICU-73.2.txt`.
+  included in `appglider/assets/licenses/ICU-73.2.txt`.
   [Source](https://github.com/unicode-org/icu/releases/tag/release-73-2).
 - **certifi 2026.10.18:** certifi contributors; Mozilla Public License 2.0. Its licence
   is preserved in `certifi-2026.10.18.dist-info/licenses/` beside the installed package.
   [Source](https://github.com/certifi/python-certifi/tree/2026.10.18).
 - **Ubuntu desktop libraries:** the packages pinned in `packaging/ubuntu-libs.json` retain
   their copyright and licence notices in
-  `usr/share/doc/appharbour/bundled-libraries/` inside the AppImage.
+  `usr/share/doc/appglider/bundled-libraries/` inside the AppImage.
 - **AppImage runtime:** AppImage contributors; the runtime pinned in
   `packaging/downloads.json` comes from the
   [type2-runtime project](https://github.com/AppImage/type2-runtime), which provides its
@@ -59,4 +59,4 @@ prevents running the extracted application with modified libraries.
 
 Python package metadata and upstream licence files are retained with the bundled packages.
 After extraction, this document and `ATTRIBUTION.md` are at
-`squashfs-root/opt/python3.13/share/doc/appharbour/`.
+`squashfs-root/opt/python3.13/share/doc/appglider/`.

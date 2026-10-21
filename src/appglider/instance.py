@@ -1,4 +1,4 @@
-"""Keep one AppHarbour running per data directory and let a second launch wake it."""
+"""Keep one AppGlider running per data directory and let a second launch wake it."""
 
 import fcntl
 import hashlib
@@ -21,7 +21,7 @@ class SingleInstance(QObject):
         self.directory = directory
         digest = hashlib.sha256(str(directory).encode()).hexdigest()[:16]
         runtime = Path(os.environ.get("XDG_RUNTIME_DIR") or tempfile.gettempdir())
-        self.socket_path = runtime / f"appharbour-{digest}.sock"
+        self.socket_path = runtime / f"appglider-{digest}.sock"
         self._lock: IO[bytes] | None = None
         self._server: socket.socket | None = None
         self._notifier: QSocketNotifier | None = None
@@ -29,7 +29,7 @@ class SingleInstance(QObject):
     def acquire(self) -> bool:
         """Return True when this process is the only instance and now owns the lock."""
         self.directory.mkdir(parents=True, exist_ok=True)
-        lock = (self.directory / "appharbour.lock").open("ab")
+        lock = (self.directory / "appglider.lock").open("ab")
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:

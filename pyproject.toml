@@ -3,8 +3,8 @@ requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "appharbour"
-version = "0.3.0"
+name = "appglider"
+version = "0.4.0"
 description = "A Linux AppImage installer, updater and launcher"
 readme = "README.md"
 license = "MIT"
@@ -16,16 +16,16 @@ dependencies = ["PySide6-Essentials>=6.8,<7"]
 dev = ["ruff", "mypy"]
 
 [project.gui-scripts]
-appharbour = "appharbour.app:main"
+appglider = "appglider.app:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.setuptools.package-data]
-appharbour = ["assets/icons/*.png", "assets/licenses/*.txt"]
+appglider = ["assets/icons/*.png", "assets/licenses/*.txt"]
 
 [tool.setuptools.data-files]
-"share/doc/appharbour" = ["ATTRIBUTION.md", "THIRD_PARTY_NOTICES.md"]
+"share/doc/appglider" = ["ATTRIBUTION.md", "THIRD_PARTY_NOTICES.md"]
 
 [tool.ruff]
 target-version = "py311"

@@ -10,16 +10,16 @@ from PySide6.QtCore import QStandardPaths, QTimer
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication, QComboBox
 
-from appharbour import APP_ICON, APP_NAME, APP_VERSION
-from appharbour.instance import SingleInstance
-from appharbour.window import LauncherWindow
+from appglider import APP_ICON, APP_NAME, APP_VERSION
+from appglider.instance import SingleInstance
+from appglider.window import LauncherWindow
 
 
 def launcher_command() -> list[str]:
     image, directory = os.environ.get("APPIMAGE"), os.environ.get("APPDIR")
     if image and directory and Path(sys.prefix).resolve().is_relative_to(Path(directory).resolve()):
         return [str(Path(image).absolute())]
-    return [sys.executable, "-O", "-m", "appharbour"]
+    return [sys.executable, "-O", "-m", "appglider"]
 
 
 def main() -> int:
@@ -28,13 +28,13 @@ def main() -> int:
     app.setApplicationName(APP_NAME)
     app.setApplicationVersion(APP_VERSION)
     app.setApplicationDisplayName(APP_NAME)
-    app.setDesktopFileName("appharbour")
+    app.setDesktopFileName("appglider")
     app.setWindowIcon(QIcon(str(APP_ICON)))
     app.setStyle("Fusion")
     smoke = "--smoke-test" in sys.argv
     instance = SingleInstance(
         Path(QStandardPaths.writableLocation(QStandardPaths.StandardLocation.GenericDataLocation))
-        / "appharbour"
+        / "appglider"
     )
     if not smoke and not instance.acquire():
         return 0
@@ -44,7 +44,7 @@ def main() -> int:
     try:
         window.library.refresh_launcher_shortcut(command, packaged=len(command) == 1)
     except (OSError, ValueError) as error:
-        window.footer.setText(f"Could not create the AppHarbour menu shortcut: {error}")
+        window.footer.setText(f"Could not create the AppGlider menu shortcut: {error}")
     window.show()
     if smoke:
 

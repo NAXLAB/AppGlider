@@ -14,9 +14,9 @@ from pathlib import Path
 from threading import Event, Thread
 from unittest.mock import patch
 
-from appharbour.catalog import APPS
-from appharbour.library import Installed, Library, Orphan, check_appimage, desktop_exec
-from appharbour.releases import (
+from appglider.catalog import APPS
+from appglider.library import Installed, Library, Orphan, check_appimage, desktop_exec
+from appglider.releases import (
     Cancelled,
     Release,
     architecture,
@@ -25,7 +25,7 @@ from appharbour.releases import (
     select_release,
     version_key,
 )
-from appharbour.storage import atomic_json
+from appglider.storage import atomic_json
 
 APP = APPS[0]
 
@@ -70,7 +70,7 @@ class LibraryTests(unittest.TestCase):
     def install(self, version: str):
         data = appimage_bytes(version.encode())
         release = release_for(version, data)
-        with patch("appharbour.releases.request", return_value=io.BytesIO(data)):
+        with patch("appglider.releases.request", return_value=io.BytesIO(data)):
             return self.library.install(APP, release, Event(), ignore_progress)
 
     def test_unregistered_appimages_are_not_part_of_the_library(self) -> None:
@@ -134,7 +134,7 @@ class LibraryTests(unittest.TestCase):
             architecture(),
         )
         with (
-            patch("appharbour.releases.request", return_value=io.BytesIO(content)),
+            patch("appglider.releases.request", return_value=io.BytesIO(content)),
             self.assertRaisesRegex(ValueError, "different CPU architecture"),
         ):
             self.library.install(APP, release, Event(), ignore_progress)
@@ -175,7 +175,7 @@ class LibraryTests(unittest.TestCase):
             with (
                 self.subTest(cancelled=cancelled),
                 patch(
-                    "appharbour.releases.request",
+                    "appglider.releases.request",
                     return_value=io.BytesIO(b"x" * len(data)),
                 ),
             ):
@@ -189,7 +189,7 @@ class LibraryTests(unittest.TestCase):
         first = self.install("1.0.0")
         data = appimage_bytes(b"new release")
         with (
-            patch("appharbour.releases.request", return_value=io.BytesIO(data)),
+            patch("appglider.releases.request", return_value=io.BytesIO(data)),
             patch.object(self.library, "_save", side_effect=OSError("disk full")),
         ):
             with self.assertRaisesRegex(OSError, "disk full"):
@@ -209,7 +209,7 @@ class LibraryTests(unittest.TestCase):
         first = self.install("1.0.0")
         second = self.install("1.1.0")
         state = self.library.data_dir / "library.json"
-        shortcut = self.library.desktop_dir / f"appharbour-{APP.id}.desktop"
+        shortcut = self.library.desktop_dir / f"appglider-{APP.id}.desktop"
         originals = {path: path.read_bytes() for path in (first.path, second.path, state, shortcut)}
         rename = Path.rename
 
@@ -270,15 +270,15 @@ class LibraryTests(unittest.TestCase):
         self.assertIn(str(recovery), str(failure.exception))
         self.assertEqual(recovery.read_bytes(), contents)
         self.assertNotIn(APP.id, self.library.records())
-        self.assertFalse((self.library.desktop_dir / f"appharbour-{APP.id}.desktop").exists())
+        self.assertFalse((self.library.desktop_dir / f"appglider-{APP.id}.desktop").exists())
 
     def test_ownership_and_running_checks_protect_installed_files(self) -> None:
         installed = self.install("1.0.0")
-        with patch("appharbour.library.running", return_value=True):
+        with patch("appglider.library.running", return_value=True):
             with self.assertRaisesRegex(ValueError, "Close"):
                 self.library.remove(APP)
         self.assertTrue(installed.path.exists())
-        marker = installed.path.parent.parent / ".appharbour"
+        marker = installed.path.parent.parent / ".appglider"
         marker.write_text("not ours")
         with self.assertRaisesRegex(ValueError, "not owned"):
             self.library.remove(APP)
@@ -296,7 +296,7 @@ class LibraryTests(unittest.TestCase):
         app_dir.rmdir()
         elsewhere = self.root / "elsewhere"
         elsewhere.mkdir()
-        (elsewhere / ".appharbour").write_text(self.library._marker(APP))
+        (elsewhere / ".appglider").write_text(self.library._marker(APP))
         app_dir.symlink_to(elsewhere, target_is_directory=True)
         with self.assertRaisesRegex(ValueError, "symbolic"):
             self.install("1.0.0")
@@ -305,7 +305,7 @@ class LibraryTests(unittest.TestCase):
     def test_failed_download_does_not_trust_an_incomplete_file(self) -> None:
         data = appimage_bytes()
         release = release_for("1.0.0", data)
-        with patch("appharbour.releases.request", return_value=io.BytesIO(data[:20])):
+        with patch("appglider.releases.request", return_value=io.BytesIO(data[:20])):
             with self.assertRaisesRegex(ValueError, "incomplete"):
                 download(release, self.root / "download", Event(), ignore_progress)
 
@@ -322,7 +322,7 @@ class LibraryTests(unittest.TestCase):
                     "SSL_CERT_DIR": "/etc/ssl/certs",
                 },
             ),
-            patch("appharbour.library.subprocess.Popen") as spawn,
+            patch("appglider.library.subprocess.Popen") as spawn,
         ):
             spawn.return_value.poll.return_value = None
             self.library.launch(APP, installed)
@@ -337,7 +337,7 @@ class LibraryTests(unittest.TestCase):
     def test_missing_ownership_marker_gives_a_clear_error_and_removes_nothing(self) -> None:
         self.install("1.0.0")
         installed = self.install("1.1.0")
-        (installed.path.parent.parent / ".appharbour").unlink()
+        (installed.path.parent.parent / ".appglider").unlink()
         data = appimage_bytes(b"new release")
         for action in (
             lambda: self.library.launch(APP, installed),
@@ -354,7 +354,7 @@ class LibraryTests(unittest.TestCase):
         cancel = Event()
         cancel.set()
         with (
-            patch("appharbour.releases.request", return_value=io.BytesIO(data)),
+            patch("appglider.releases.request", return_value=io.BytesIO(data)),
             self.assertRaises(Cancelled),
         ):
             self.library.install(APP, release_for("1.1.0", data), cancel, ignore_progress)
@@ -383,14 +383,14 @@ class LibraryTests(unittest.TestCase):
         (root / "user-data.txt").write_text("keep me")
         self.library.remove(APP)
         self.assertEqual((root / "user-data.txt").read_text(), "keep me")
-        self.assertTrue((root / ".appharbour").is_file())
+        self.assertTrue((root / ".appglider").is_file())
 
     def test_oversized_launch_log_is_rotated(self) -> None:
         installed = self.install("1.0.0")
         log = self.library.data_dir / "logs" / f"{APP.id}.log"
         log.parent.mkdir(parents=True)
         log.write_bytes(b"x" * (6 * 1024 * 1024))
-        with patch("appharbour.library.subprocess.Popen") as spawn:
+        with patch("appglider.library.subprocess.Popen") as spawn:
             spawn.return_value.poll.return_value = None
             self.library.launch(APP, installed)
         self.assertEqual(log.stat().st_size, 0)
@@ -415,7 +415,7 @@ class LibraryTests(unittest.TestCase):
             except Exception as error:  # pragma: no cover - reported by the assertion below
                 outcome.append(error)
 
-        with patch("appharbour.releases.request", return_value=Slow(data)):
+        with patch("appglider.releases.request", return_value=Slow(data)):
             worker = Thread(target=run)
             worker.start()
             try:
@@ -440,14 +440,14 @@ class LibraryTests(unittest.TestCase):
                 if not inner.tell():
                     # Another launcher activates a different version mid-download.
                     with patch(
-                        "appharbour.releases.request",
+                        "appglider.releases.request",
                         return_value=io.BytesIO(appimage_bytes(b"other")),
                     ):
                         self.library.install(APP, other, Event(), ignore_progress)
                 return super().read(size)
 
         with (
-            patch("appharbour.releases.request", return_value=Interfering(data)),
+            patch("appglider.releases.request", return_value=Interfering(data)),
             self.assertRaisesRegex(ValueError, "library changed"),
         ):
             self.library.install(APP, release, Event(), ignore_progress)
@@ -476,8 +476,8 @@ class LibraryTests(unittest.TestCase):
         release = release_for("1.0.0", data)
         usage = shutil._ntuple_diskusage(10**12, 10**12 - 1024, 1024)
         with (
-            patch("appharbour.library.shutil.disk_usage", return_value=usage),
-            patch("appharbour.library.download") as fetch,
+            patch("appglider.library.shutil.disk_usage", return_value=usage),
+            patch("appglider.library.download") as fetch,
         ):
             with self.assertRaisesRegex(ValueError, "not enough free disk space"):
                 self.library.install(APP, release, Event(), ignore_progress)
@@ -507,7 +507,7 @@ class LibraryTests(unittest.TestCase):
         data = bytearray(Path(shutil.which("true")).read_bytes())
         data[8:11] = b"AI\x02"
         payload = bytes(data)
-        with patch("appharbour.releases.request", return_value=io.BytesIO(payload)):
+        with patch("appglider.releases.request", return_value=io.BytesIO(payload)):
             installed = self.library.install(
                 APP, release_for("1.0.0", payload), Event(), ignore_progress
             )
@@ -522,8 +522,8 @@ class LibraryTests(unittest.TestCase):
 
     def test_menu_shortcut_tracks_active_version_without_duplicates(self) -> None:
         first = self.install("1.0.0")
-        shortcut = self.library.desktop_dir / f"appharbour-{APP.id}.desktop"
-        self.assertIn("Name=PhotoCraft (AppHarbour)", shortcut.read_text())
+        shortcut = self.library.desktop_dir / f"appglider-{APP.id}.desktop"
+        self.assertIn("Name=PhotoCraft (AppGlider)", shortcut.read_text())
         self.assertIn(str(first.path), shortcut.read_text())
         second = self.install("1.1.0")
         self.assertEqual(list(self.library.desktop_dir.glob("*.desktop")), [shortcut])
@@ -539,20 +539,18 @@ class LibraryTests(unittest.TestCase):
     def test_launcher_shortcut_is_stable_and_preserves_foreign_entries(
         self,
     ) -> None:
-        shortcut = self.library.create_launcher_shortcut([sys.executable, "-O", "-m", "appharbour"])
-        self.assertIn("Name=AppHarbour\n", shortcut.read_text())
-        self.assertIn(
-            desktop_exec([sys.executable, "-O", "-m", "appharbour"]), shortcut.read_text()
-        )
-        self.assertTrue((self.library.data_dir / "icons" / "appharbour.png").is_file())
+        shortcut = self.library.create_launcher_shortcut([sys.executable, "-O", "-m", "appglider"])
+        self.assertIn("Name=AppGlider\n", shortcut.read_text())
+        self.assertIn(desktop_exec([sys.executable, "-O", "-m", "appglider"]), shortcut.read_text())
+        self.assertTrue((self.library.data_dir / "icons" / "appglider.png").is_file())
         self.assertEqual(
-            self.library.create_launcher_shortcut([sys.executable, "-O", "-m", "appharbour"]),
+            self.library.create_launcher_shortcut([sys.executable, "-O", "-m", "appglider"]),
             shortcut,
         )
         self.assertEqual(list(self.library.desktop_dir.glob("*.desktop")), [shortcut])
         shortcut.write_text("[Desktop Entry]\nName=Someone else's shortcut\n")
         with self.assertRaisesRegex(OSError, "another application"):
-            self.library.create_launcher_shortcut([sys.executable, "-O", "-m", "appharbour"])
+            self.library.create_launcher_shortcut([sys.executable, "-O", "-m", "appglider"])
         self.assertIn("Someone else's shortcut", shortcut.read_text())
 
     def test_unrecognised_entries_are_preserved_until_explicitly_discarded(self) -> None:
@@ -598,7 +596,7 @@ class LibraryTests(unittest.TestCase):
         os.utime(new, (2_000, 2_000))
         shortcut = self.library.refresh_launcher_shortcut([str(old)], packaged=True)
         self.assertIn(desktop_exec([str(old)]), shortcut.read_text())
-        development = ["/project/.venv/bin/python", "-O", "-m", "appharbour"]
+        development = ["/project/.venv/bin/python", "-O", "-m", "appglider"]
         self.library.refresh_launcher_shortcut(development, packaged=False)
         self.assertIn(desktop_exec([str(old)]), shortcut.read_text())
         self.library.refresh_launcher_shortcut([str(new)], packaged=True)
@@ -610,23 +608,23 @@ class LibraryTests(unittest.TestCase):
         self.assertIn(desktop_exec(development), shortcut.read_text())
 
     def test_refresh_still_refuses_foreign_shortcuts(self) -> None:
-        shortcut = self.library.desktop_dir / "appharbour.desktop"
+        shortcut = self.library.desktop_dir / "appglider.desktop"
         shortcut.parent.mkdir(parents=True)
         shortcut.write_text("[Desktop Entry]\nExec=/bin/true\n")
         with self.assertRaisesRegex(OSError, "another application"):
             self.library.refresh_launcher_shortcut(["/x.AppImage"], packaged=True)
 
     def test_packaged_shortcut_accepts_image_path_with_spaces(self) -> None:
-        shortcut = self.library.create_launcher_shortcut(["/home/a b/AppHarbour.AppImage"])
-        self.assertIn('Exec="/home/a b/AppHarbour.AppImage"\n', shortcut.read_text())
+        shortcut = self.library.create_launcher_shortcut(["/home/a b/AppGlider.AppImage"])
+        self.assertIn('Exec="/home/a b/AppGlider.AppImage"\n', shortcut.read_text())
 
     def test_failed_shortcut_write_preserves_the_previous_entry(self) -> None:
         self.install("1.0.0")
-        self.library.create_launcher_shortcut(["/first/AppHarbour.AppImage"])
+        self.library.create_launcher_shortcut(["/first/AppGlider.AppImage"])
         replace = os.replace
         for name, repair in (
-            (f"appharbour-{APP.id}.desktop", lambda: self.library.create_shortcut(APP)),
-            ("appharbour.desktop", lambda: self.library.create_launcher_shortcut(["/second"])),
+            (f"appglider-{APP.id}.desktop", lambda: self.library.create_shortcut(APP)),
+            ("appglider.desktop", lambda: self.library.create_launcher_shortcut(["/second"])),
         ):
             shortcut = self.library.desktop_dir / name
             original = shortcut.read_bytes()
@@ -637,7 +635,7 @@ class LibraryTests(unittest.TestCase):
                 return replace(source, destination)
 
             with (
-                patch("appharbour.storage.os.replace", side_effect=fail_shortcut),
+                patch("appglider.storage.os.replace", side_effect=fail_shortcut),
                 self.assertRaisesRegex(OSError, "disk full"),
             ):
                 repair()
@@ -652,25 +650,25 @@ class LibraryTests(unittest.TestCase):
 
     def test_reopen_preserves_library_and_shortcut_ownership(self) -> None:
         installed = self.install("1.0.0")
-        marker = installed.path.parent.parent / ".appharbour"
-        self.assertEqual(marker.read_text(), f"AppHarbour\n{APP.id}\n{APP.repo}\n")
+        marker = installed.path.parent.parent / ".appglider"
+        self.assertEqual(marker.read_text(), f"AppGlider\n{APP.id}\n{APP.repo}\n")
         state = (self.library.data_dir / "library.json").read_bytes()
-        shortcut = self.library.desktop_dir / f"appharbour-{APP.id}.desktop"
+        shortcut = self.library.desktop_dir / f"appglider-{APP.id}.desktop"
         shortcut.write_text(
-            shortcut.read_text().replace("PhotoCraft (AppHarbour)", "Outdated application label")
+            shortcut.read_text().replace("PhotoCraft (AppGlider)", "Outdated application label")
         )
         reopened = Library(
             self.library.data_dir, self.library.apps_dir, desktop_dir=self.library.desktop_dir
         )
         self.assertEqual(reopened.scan()[APP.id], installed)
         reopened.create_shortcut(APP)
-        self.assertIn("Name=PhotoCraft (AppHarbour)", shortcut.read_text())
+        self.assertIn("Name=PhotoCraft (AppGlider)", shortcut.read_text())
         self.assertEqual((self.library.data_dir / "library.json").read_bytes(), state)
         self.assertEqual(list(self.library.desktop_dir.glob("*.desktop")), [shortcut])
 
     def test_shortcut_repair_and_uninstall_preserve_other_shortcuts(self) -> None:
         self.install("1.0.0")
-        own = self.library.desktop_dir / f"appharbour-{APP.id}.desktop"
+        own = self.library.desktop_dir / f"appglider-{APP.id}.desktop"
         own.write_text("[Desktop Entry]\nName=Someone else's shortcut\n")
         contents = own.read_text()
         with self.assertRaisesRegex(OSError, "not owned"):
@@ -683,9 +681,9 @@ class LibraryTests(unittest.TestCase):
 
     def test_shortcut_repair_preserves_existing_and_dangling_symlink_targets(self) -> None:
         self.install("1.0.0")
-        shortcut = self.library.desktop_dir / f"appharbour-{APP.id}.desktop"
+        shortcut = self.library.desktop_dir / f"appglider-{APP.id}.desktop"
         target = self.external / "foreign.desktop"
-        contents = "[Desktop Entry]\nName=Foreign\nX-AppHarbour=true\n"
+        contents = "[Desktop Entry]\nName=Foreign\nX-AppGlider=true\n"
         for existing in (True, False):
             with self.subTest(existing=existing):
                 if existing:
@@ -735,12 +733,12 @@ class ReleaseTests(unittest.TestCase):
         expected = metadata["assets"][0].pop("digest").removeprefix("sha256:")
         filename = metadata["assets"][0]["name"]
         with patch(
-            "appharbour.releases.read_metadata",
+            "appglider.releases.read_metadata",
             side_effect=[json.dumps(metadata).encode(), f"{expected}  {filename}\n".encode()],
         ):
             self.assertEqual(latest_release(APP, Event()).sha256, expected)
         with patch(
-            "appharbour.releases.read_metadata",
+            "appglider.releases.read_metadata",
             side_effect=[
                 json.dumps(metadata).encode(),
                 f"{expected}  other-file.AppImage\n".encode(),

@@ -16,11 +16,11 @@ from PySide6.QtCore import QBuffer, QIODevice
 from PySide6.QtGui import QImage
 from PySide6.QtWidgets import QApplication
 
-from appharbour import APP_ICON
-from appharbour.catalog import APPS, custom_app
-from appharbour.icons import MAX_ICON_BYTES, discover_icons, icon_pixmap, normalise_icon
-from appharbour.library import Library
-from appharbour.releases import Cancelled, RateLimited
+from appglider import APP_ICON
+from appglider.catalog import APPS, custom_app
+from appglider.icons import MAX_ICON_BYTES, discover_icons, icon_pixmap, normalise_icon
+from appglider.library import Library
+from appglider.releases import Cancelled, RateLimited
 
 SVG = (
     b'<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64">'
@@ -119,7 +119,7 @@ class IconTests(unittest.TestCase):
             }
         )
         entries[-1]["mode"] = "120000"
-        with patch("appharbour.icons.read_metadata", side_effect=read) as metadata:
+        with patch("appglider.icons.read_metadata", side_effect=read) as metadata:
             result = discover_icons(CUSTOM, Event())
         self.assertEqual(
             [icon.name for icon in result],
@@ -137,20 +137,20 @@ class IconTests(unittest.TestCase):
         entries, read = self.metadata(
             {f"assets/icon-{n}.png": b"broken" + bytes([n]) for n in range(20)}
         )
-        with patch("appharbour.icons.read_metadata", side_effect=read) as metadata:
+        with patch("appglider.icons.read_metadata", side_effect=read) as metadata:
             self.assertEqual(discover_icons(CUSTOM, Event()), ())
             self.assertEqual(metadata.call_count, 9)
         for tree in ({"tree": entries, "truncated": True}, [], {"tree": "bad"}):
-            with patch("appharbour.icons.read_metadata", return_value=json.dumps(tree).encode()):
+            with patch("appglider.icons.read_metadata", return_value=json.dumps(tree).encode()):
                 with self.assertRaises(ValueError):
                     discover_icons(CUSTOM, Event())
         cancel = Event()
         cancel.set()
-        with patch("appharbour.icons.read_metadata") as metadata:
+        with patch("appglider.icons.read_metadata") as metadata:
             with self.assertRaises(Cancelled):
                 discover_icons(CUSTOM, cancel)
             metadata.assert_not_called()
-        with patch("appharbour.icons.read_metadata", side_effect=RateLimited("api.github.com", 1)):
+        with patch("appglider.icons.read_metadata", side_effect=RateLimited("api.github.com", 1)):
             with self.assertRaises(RateLimited):
                 discover_icons(CUSTOM, Event())
 
@@ -164,7 +164,7 @@ class IconTests(unittest.TestCase):
             with (
                 self.subTest(path=path),
                 patch(
-                    "appharbour.icons.read_metadata",
+                    "appglider.icons.read_metadata",
                     side_effect=[tree, RateLimited("api.github.com", 1)],
                 ) as metadata,
                 self.assertRaises(RateLimited),
@@ -181,7 +181,7 @@ class IconTests(unittest.TestCase):
         reopened = Library(self.library.data_dir, self.library.apps_dir, self.library.desktop_dir)
         self.assertEqual(reopened.icon_path(CUSTOM), path)
         self.assertEqual(reopened.apps[-1], CUSTOM)
-        with patch("appharbour.storage.os.replace", side_effect=OSError("Disk full")):
+        with patch("appglider.storage.os.replace", side_effect=OSError("Disk full")):
             with self.assertRaises(OSError):
                 reopened.set_icon(CUSTOM, SVG.replace(b"39b3d7", b"112233"))
         with self.assertRaises(ValueError):

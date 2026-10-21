@@ -1,12 +1,16 @@
-# AppHarbour
+# AppGlider
 
-<img src="src/appharbour/assets/icons/appharbour.png" alt="AppHarbour icon" width="96">
+<img src="src/appglider/assets/icons/appglider.png" alt="AppGlider icon" width="96">
 
 A Linux AppImage installer, updater and launcher, written in Python with PySide6.
 Manage the 13 ArtCraft applications, SolidCraft and supported projects from other public
 GitHub repositories in one place.
 
-![AppHarbour in dark mode with built-in apps and added GitHub repositories](docs/previews/appharbour-dark.png)
+AppGlider was previously named AppHarbour; it was renamed because that name was already
+in use. Versions up to 0.3.0 were released as AppHarbour, and 0.4.0 starts a fresh library
+and settings under the new name.
+
+![AppGlider in dark mode with built-in apps and added GitHub repositories](docs/previews/appglider-dark.png)
 
 Example library with [UltiMaker Cura](https://github.com/Ultimaker/Cura),
 [LightCraft Classic](https://github.com/emmertex/lightcraft-classic) and
@@ -24,30 +28,30 @@ Versions shown are illustrative.
 - See GitHub request limits, retry times and cached release information from the footer.
 - Discover their application icons or choose a local PNG/SVG, with offline icon storage.
 - Create application-menu shortcuts and access the launcher from the system tray.
-- Run a single window per user: launching AppHarbour again raises the running one.
+- Run a single window per user: launching AppGlider again raises the running one.
 
-AppHarbour manages its own installations. Existing AppImages from other launchers are
+AppGlider manages its own installations. Existing AppImages from other launchers are
 left alone. **Installed (N)** and **Updates (N)** show library totals, even while searching.
 
 ## Run
 
-The AppHarbour AppImage includes Python and Qt. Use a release AppImage, or follow the
+The AppGlider AppImage includes Python and Qt. Use a release AppImage, or follow the
 [build instructions](docs/development.md#build-the-appimage) to create one locally.
-For version 0.3.0:
+For version 0.4.0:
 
 ```sh
-chmod +x AppHarbour-0.3.0-linux-x86_64.AppImage
-./AppHarbour-0.3.0-linux-x86_64.AppImage
+chmod +x AppGlider-0.4.0-linux-x86_64.AppImage
+./AppGlider-0.4.0-linux-x86_64.AppImage
 ```
 
-Keep the file in a permanent location: AppHarbour creates a menu shortcut pointing to it.
+Keep the file in a permanent location: AppGlider creates a menu shortcut pointing to it.
 If you move it, launch it again to repair the shortcut. A development run never repoints an
 existing working shortcut. If FUSE is unavailable, add
 `--appimage-extract-and-run` to the launch command.
 
 The current package targets Linux x86_64 desktops with glibc 2.35 or newer, such as
 Ubuntu 22.04 or newer. Graphics drivers and standard desktop libraries come from the system.
-Applications downloaded through AppHarbour may have their own runtime requirements.
+Applications downloaded through AppGlider may have their own runtime requirements.
 
 ## Add an application
 
@@ -73,7 +77,7 @@ Requires Python 3.11 or newer and a Linux desktop.
 ```sh
 python3 -m venv .venv
 .venv/bin/python -m pip install -e '.[dev]'
-.venv/bin/python -O -m appharbour
+.venv/bin/python -O -m appglider
 ```
 
 See [development and packaging](docs/development.md) for checks and local builds,
@@ -81,8 +85,8 @@ and [GitHub Actions](docs/builds.md) for automated builds and tag-triggered draf
 
 ## Licence and credits
 
-AppHarbour's original code is licensed under [MIT](LICENSE).
+AppGlider's original code is licensed under [MIT](LICENSE).
 
-AppHarbour's interface is original to this project. Application icons belong to their
+AppGlider's interface is original to this project. Application icons belong to their
 respective projects; see [ATTRIBUTION.md](ATTRIBUTION.md) for sources and licence notices.
 Bundled runtime libraries have their own [licences and source links](THIRD_PARTY_NOTICES.md).

@@ -14,9 +14,9 @@ from unittest.mock import patch
 from test_library import APP, appimage_bytes, ignore_progress
 from test_releases import Response, public_assets
 
-from appharbour import releases
-from appharbour.catalog import custom_app
-from appharbour.library import Library
+from appglider import releases
+from appglider.catalog import custom_app
+from appglider.library import Library
 
 
 def metadata(version, prerelease=False, draft=False):

@@ -32,22 +32,22 @@ from PySide6.QtWidgets import (
 )
 from test_library import APP, appimage_bytes, release_for
 
-from appharbour import APP_ICON, APP_VERSION, github_status, releases
-from appharbour.catalog import APPS, custom_app
-from appharbour.jobs import TaskResult
-from appharbour.library import Installed, Library
-from appharbour.release_info import ReleaseInfo, ReleaseOption, info_path
-from appharbour.releases import Release
-from appharbour.repositories_dialog import RepositoriesDialog
-from appharbour.storage import atomic_json
-from appharbour.window import DetailsDialog, LauncherWindow, OrphansDialog, SettingsDialog
+from appglider import APP_ICON, APP_VERSION, github_status, releases
+from appglider.catalog import APPS, custom_app
+from appglider.jobs import TaskResult
+from appglider.library import Installed, Library
+from appglider.release_info import ReleaseInfo, ReleaseOption, info_path
+from appglider.releases import Release
+from appglider.repositories_dialog import RepositoriesDialog
+from appglider.storage import atomic_json
+from appglider.window import DetailsDialog, LauncherWindow, OrphansDialog, SettingsDialog
 
 
 class LibraryTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.qt = QApplication.instance() or QApplication([])
-        cls.qt.setApplicationName("AppHarbour tests")
+        cls.qt.setApplicationName("AppGlider tests")
         cls.qt.setStyle("Fusion")
 
     def setUp(self) -> None:
@@ -70,38 +70,38 @@ class LibraryTests(unittest.TestCase):
     def visible_ids(self) -> set[str]:
         return {app_id for app_id, card in self.window.cards.items() if card.isVisible()}
 
-    def test_appharbour_identity_and_icon(self) -> None:
-        self.assertEqual(self.window.windowTitle(), "AppHarbour")
+    def test_appglider_identity_and_icon(self) -> None:
+        self.assertEqual(self.window.windowTitle(), "AppGlider")
         self.assertFalse(self.window.windowIcon().isNull())
         self.assertFalse(self.window.tray.icon().isNull())
-        self.assertEqual(self.window.findChild(QLabel, "pageTitle").text(), "AppHarbour")
+        self.assertEqual(self.window.findChild(QLabel, "pageTitle").text(), "AppGlider")
         image = QImage(str(APP_ICON))
         self.assertTrue(image.hasAlphaChannel())
         self.assertEqual(image.pixelColor(0, 0).alpha(), 0)
         for size in (16, 24, 32, 64):
             self.assertFalse(self.window.windowIcon().pixmap(size, size).isNull())
 
-    def test_entry_point_uses_appharbour_identity(self) -> None:
-        from appharbour.app import main
+    def test_entry_point_uses_appglider_identity(self) -> None:
+        from appglider.app import main
 
         with (
-            patch("appharbour.app.QApplication") as application,
-            patch("appharbour.app.LauncherWindow") as window,
-            patch("appharbour.app.QTimer.singleShot") as timer,
-            patch("appharbour.app.SingleInstance") as instance,
+            patch("appglider.app.QApplication") as application,
+            patch("appglider.app.LauncherWindow") as window,
+            patch("appglider.app.QTimer.singleShot") as timer,
+            patch("appglider.app.SingleInstance") as instance,
         ):
             instance.return_value.acquire.return_value = True
             application.return_value.exec.return_value = 0
             self.assertEqual(main(), 0)
-            application.return_value.setOrganizationName.assert_called_once_with("AppHarbour")
-            application.return_value.setApplicationName.assert_called_once_with("AppHarbour")
-            application.return_value.setApplicationDisplayName.assert_called_once_with("AppHarbour")
-            application.return_value.setDesktopFileName.assert_called_once_with("appharbour")
+            application.return_value.setOrganizationName.assert_called_once_with("AppGlider")
+            application.return_value.setApplicationName.assert_called_once_with("AppGlider")
+            application.return_value.setApplicationDisplayName.assert_called_once_with("AppGlider")
+            application.return_value.setDesktopFileName.assert_called_once_with("appglider")
             window.return_value.library.refresh_launcher_shortcut.assert_called_once()
             timer.assert_called_once_with(0, window.return_value.refresh_releases)
 
     def test_close_hides_to_tray_and_activation_restores_window(self) -> None:
-        with patch("appharbour.window.QSystemTrayIcon.isSystemTrayAvailable", return_value=True):
+        with patch("appglider.window.QSystemTrayIcon.isSystemTrayAvailable", return_value=True):
             self.window.tray.show()
             self.assertFalse(self.window.close())
             self.assertFalse(self.window.isVisible())
@@ -118,7 +118,7 @@ class LibraryTests(unittest.TestCase):
             self.assertFalse(self.window.tray.isVisible())
 
     def test_no_tray_host_keeps_normal_close_behaviour(self) -> None:
-        with patch("appharbour.window.QSystemTrayIcon.isSystemTrayAvailable", return_value=False):
+        with patch("appglider.window.QSystemTrayIcon.isSystemTrayAvailable", return_value=False):
             self.window.tray.show()
             event = QCloseEvent()
             self.window.closeEvent(event)
@@ -129,13 +129,13 @@ class LibraryTests(unittest.TestCase):
         self.assertFalse(self.window.tray_apps_menu.isEnabled())
         self.assertFalse(self.window.tray_check_action.isEnabled())
         payload = appimage_bytes()
-        with patch("appharbour.releases.request", return_value=io.BytesIO(payload)):
+        with patch("appglider.releases.request", return_value=io.BytesIO(payload)):
             self.window.library.install(
                 APP, release_for("1.0.0", payload), Event(), lambda *args: None
             )
         self.window.releases[APP.id] = release_for("1.1.0", payload)
         self.window.scan_installed()
-        self.assertEqual(self.window.tray.toolTip(), "AppHarbour · Updates: 1")
+        self.assertEqual(self.window.tray.toolTip(), "AppGlider · Updates: 1")
         actions = self.window.tray_apps_menu.actions()
         self.assertEqual([action.text() for action in actions], [APP.name])
         with patch.object(self.window, "launch_app") as launch:
@@ -146,11 +146,11 @@ class LibraryTests(unittest.TestCase):
     def test_hiding_keeps_download_running_and_quit_can_cancel_safely(self) -> None:
         with (
             patch(
-                "appharbour.window.QSystemTrayIcon.isSystemTrayAvailable",
+                "appglider.window.QSystemTrayIcon.isSystemTrayAvailable",
                 return_value=True,
             ),
-            patch("appharbour.window.QThreadPool.globalInstance"),
-            patch("appharbour.window.QMessageBox.question") as question,
+            patch("appglider.window.QThreadPool.globalInstance"),
+            patch("appglider.window.QMessageBox.question") as question,
         ):
             self.window.tray.show()
             self.window.start_task("Downloading", lambda cancel, progress: TaskResult("Done"))
@@ -348,10 +348,10 @@ class LibraryTests(unittest.TestCase):
         with (
             patch.object(window.library, "launch") as launch,
             patch(
-                "appharbour.window.QTimer.singleShot",
+                "appglider.window.QTimer.singleShot",
                 side_effect=lambda delay, *args: single_shot(0, *args),
             ),
-            patch("appharbour.window.QMessageBox.warning") as warning,
+            patch("appglider.window.QMessageBox.warning") as warning,
         ):
             process = launch.return_value
             process.poll.return_value = 1
@@ -396,6 +396,62 @@ class LibraryTests(unittest.TestCase):
         QTimer.singleShot(0, cancel_settings)
         self.window.open_settings()
         self.assertEqual(self.settings.value("appearance/theme"), "Dark")
+
+    def test_appearance_choices_switch_and_persist(self) -> None:
+        def window_colour() -> str:
+            return self.qt.palette().color(QPalette.ColorRole.Window).name()
+
+        def choose(theme: str) -> None:
+            def change() -> None:
+                dialog = self.qt.activeModalWidget()
+                if isinstance(dialog, SettingsDialog):
+                    self.assertEqual(
+                        [dialog.theme.itemText(i) for i in range(dialog.theme.count())],
+                        ["System", "Light", "Dark", "Forest", "Earthy", "Sandstone"],
+                    )
+                    dialog.theme.setCurrentText(theme)
+                    dialog.accept()
+
+            QTimer.singleShot(0, change)
+            self.window.open_settings()
+
+        self.settings.remove("appearance/theme")
+
+        def default_choice() -> None:
+            dialog = self.qt.activeModalWidget()
+            if isinstance(dialog, SettingsDialog):
+                self.assertEqual(dialog.theme.currentText(), "System")
+                dialog.reject()
+
+        QTimer.singleShot(0, default_choice)
+        self.window.open_settings()
+        for theme, colour in (
+            ("Light", "#f5f6fa"),
+            ("Dark", "#171b24"),
+            ("Forest", "#1c1f1a"),
+            ("Earthy", "#2a2420"),
+            ("Sandstone", "#2b2923"),
+        ):
+            choose(theme)
+            self.assertEqual(self.settings.value("appearance/theme"), theme)
+            self.assertEqual(window_colour(), colour)
+
+    def test_system_appearance_uses_the_native_palette(self) -> None:
+        self.settings.setValue("appearance/theme", "Forest")
+        self.window.apply_theme()
+        self.assertEqual(self.qt.palette().color(QPalette.ColorRole.Window).name(), "#1c1f1a")
+        for value in ("System", "Unknown"):
+            self.settings.setValue("appearance/theme", value)
+            self.window.apply_theme()
+            native = QPalette()
+            self.assertEqual(
+                self.qt.palette().color(QPalette.ColorRole.Window).name(),
+                native.color(QPalette.ColorRole.Window).name(),
+            )
+            self.assertEqual(
+                self.qt.palette().color(QPalette.ColorRole.Highlight).name(),
+                native.color(QPalette.ColorRole.Highlight).name(),
+            )
 
     def wait_for_task(self) -> None:
         deadline = time.monotonic() + 5
@@ -485,7 +541,7 @@ class LibraryTests(unittest.TestCase):
     def test_empty_library_and_added_repositories_make_no_background_requests(self) -> None:
         info = self.release_info()
         atomic_json(info_path(APP, self.window.library.data_dir / "release-cache"), asdict(info))
-        with patch("appharbour.window.discover_releases") as discover:
+        with patch("appglider.window.discover_releases") as discover:
             self.window.refresh_releases()
             self.window.refresh_releases(force=True)
             self.window.library.add_repository(custom_app("example/another-app"))
@@ -520,8 +576,8 @@ class LibraryTests(unittest.TestCase):
                 dialog.reject()
 
         with (
-            patch("appharbour.window.discover_releases", return_value=info) as discover,
-            patch("appharbour.library.download") as download,
+            patch("appglider.window.discover_releases", return_value=info) as discover,
+            patch("appglider.library.download") as download,
         ):
             QTimer.singleShot(0, inspect)
             self.window.open_details(APP.id)
@@ -548,7 +604,7 @@ class LibraryTests(unittest.TestCase):
                 dialog.check_button.click()
                 dialog.reject()
 
-        with patch("appharbour.window.discover_releases", side_effect=discover):
+        with patch("appglider.window.discover_releases", side_effect=discover):
             try:
                 QTimer.singleShot(0, close_details)
                 self.window.open_details(APP.id)
@@ -582,9 +638,9 @@ class LibraryTests(unittest.TestCase):
                 dialog.reject()
 
         with (
-            patch("appharbour.window.discover_releases", side_effect=OSError("Offline")),
-            patch("appharbour.window.QMessageBox.warning"),
-            patch("appharbour.window.QThreadPool.globalInstance") as pool,
+            patch("appglider.window.discover_releases", side_effect=OSError("Offline")),
+            patch("appglider.window.QMessageBox.warning"),
+            patch("appglider.window.QThreadPool.globalInstance") as pool,
         ):
             pool.return_value.start.side_effect = lambda task: task.run()
             QTimer.singleShot(0, inspect)
@@ -596,7 +652,7 @@ class LibraryTests(unittest.TestCase):
         other = APPS[1]
         record = Installed(Path(self.temp.name) / "example.AppImage", "0.9.0", True)
         self.window.installed = {APP.id: record, other.id: record}
-        with patch("appharbour.window.QThreadPool.globalInstance") as pool:
+        with patch("appglider.window.QThreadPool.globalInstance") as pool:
             self.window.checks.add([APP.id, other.id])
             self.assertEqual(self.window.checks.queue, [other.id])
             self.window.installed.pop(other.id)
@@ -632,8 +688,8 @@ class LibraryTests(unittest.TestCase):
         for plentiful, started in ((False, 1), (True, 2)):
             with (
                 self.subTest(plentiful=plentiful),
-                patch("appharbour.window.QThreadPool.globalInstance") as pool,
-                patch("appharbour.window.github_status.quota_plentiful", return_value=plentiful),
+                patch("appglider.window.QThreadPool.globalInstance") as pool,
+                patch("appglider.window.github_status.quota_plentiful", return_value=plentiful),
             ):
                 self.window.installed = {APP.id: record, other.id: record}
                 self.window.checks.add([APP.id, other.id])
@@ -648,11 +704,11 @@ class LibraryTests(unittest.TestCase):
     def test_refresh_only_checks_installed_apps_and_respects_release_preferences(self) -> None:
         info = self.release_info()
         payload = appimage_bytes()
-        with patch("appharbour.releases.request", return_value=io.BytesIO(payload)):
+        with patch("appglider.releases.request", return_value=io.BytesIO(payload)):
             self.window.library.install(
                 APP, release_for("0.9.0", payload), Event(), lambda *args: None
             )
-        with patch("appharbour.window.discover_releases", return_value=info) as discover:
+        with patch("appglider.window.discover_releases", return_value=info) as discover:
             self.window.refresh_releases()
             self.assertTrue(self.window.cards[APP.id].action_button.isEnabled())
             self.wait_for_release_checks()
@@ -696,7 +752,7 @@ class LibraryTests(unittest.TestCase):
     def test_card_preference_changes_offers_and_count_without_installing(self) -> None:
         info = self.release_info()
         payload = appimage_bytes()
-        with patch("appharbour.releases.request", return_value=io.BytesIO(payload)):
+        with patch("appglider.releases.request", return_value=io.BytesIO(payload)):
             self.window.library.install(APP, info.stable.release, Event(), lambda *args: None)
         atomic_json(info_path(APP, self.window.library.data_dir / "release-cache"), asdict(info))
         self.window.scan_installed()
@@ -724,7 +780,7 @@ class LibraryTests(unittest.TestCase):
     def test_failed_refresh_retains_badges_and_shows_last_checked_without_dialog(self) -> None:
         info = replace(self.release_info(), checked_at=time.time() - 3600)
         payload = appimage_bytes()
-        with patch("appharbour.releases.request", return_value=io.BytesIO(payload)):
+        with patch("appglider.releases.request", return_value=io.BytesIO(payload)):
             self.window.library.install(
                 APP, release_for("0.9.0", payload), Event(), lambda *args: None
             )
@@ -732,8 +788,8 @@ class LibraryTests(unittest.TestCase):
         self.window.scan_installed()
         self.assertIn("refresh needed", self.window.cards[APP.id].checked.text())
         with (
-            patch("appharbour.window.discover_releases", side_effect=OSError("Offline")),
-            patch("appharbour.window.QMessageBox.warning") as warning,
+            patch("appglider.window.discover_releases", side_effect=OSError("Offline")),
+            patch("appglider.window.QMessageBox.warning") as warning,
         ):
             self.window.refresh_releases()
             self.wait_for_release_checks()
@@ -760,8 +816,8 @@ class LibraryTests(unittest.TestCase):
         payload = appimage_bytes()
         release = replace(release_for("1.1.0-beta.1", payload), prerelease=True, is_latest=False)
         with (
-            patch("appharbour.window.latest_release", return_value=release) as latest,
-            patch("appharbour.releases.request", return_value=io.BytesIO(payload)),
+            patch("appglider.window.latest_release", return_value=release) as latest,
+            patch("appglider.releases.request", return_value=io.BytesIO(payload)),
         ):
             card.action_button.click()
             self.wait_for_task()
@@ -772,14 +828,14 @@ class LibraryTests(unittest.TestCase):
 
     def test_closing_cancels_background_refresh_without_installation_prompt(self) -> None:
         payload = appimage_bytes()
-        with patch("appharbour.releases.request", return_value=io.BytesIO(payload)):
+        with patch("appglider.releases.request", return_value=io.BytesIO(payload)):
             self.window.library.install(
                 APP, release_for("1.0.0", payload), Event(), lambda *args: None
             )
         with (
-            patch("appharbour.window.QThreadPool.globalInstance"),
-            patch("appharbour.window.QMessageBox.question") as question,
-            patch("appharbour.window.QSystemTrayIcon.isSystemTrayAvailable", return_value=False),
+            patch("appglider.window.QThreadPool.globalInstance"),
+            patch("appglider.window.QMessageBox.question") as question,
+            patch("appglider.window.QSystemTrayIcon.isSystemTrayAvailable", return_value=False),
         ):
             self.window.refresh_releases()
             task = self.window.checks.tasks[APP.id]
@@ -794,7 +850,7 @@ class LibraryTests(unittest.TestCase):
 
     def test_managed_appimage_gets_launch_action_and_installed_filter(self) -> None:
         payload = appimage_bytes()
-        with patch("appharbour.releases.request", return_value=io.BytesIO(payload)):
+        with patch("appglider.releases.request", return_value=io.BytesIO(payload)):
             self.window.library.install(
                 APP, release_for("1.0.0", payload), Event(), lambda *args: None
             )
@@ -804,19 +860,19 @@ class LibraryTests(unittest.TestCase):
         self.assertEqual(card.action_button.text(), "Launch")
         self.window.tabs.setCurrentIndex(1)
         self.assertEqual(self.visible_ids(), {APP.id})
-        with patch("appharbour.library.subprocess.Popen") as spawn:
+        with patch("appglider.library.subprocess.Popen") as spawn:
             spawn.return_value.poll.return_value = None
             QTest.mouseClick(card.action_button, Qt.MouseButton.LeftButton)
             self.assertEqual(spawn.call_args.args[0], [str(path)])
         self.assertTrue(card.remove_action.isEnabled())
         self.assertTrue(card.shortcut_action.isEnabled())
-        shortcut = self.window.library.desktop_dir / f"appharbour-{APP.id}.desktop"
+        shortcut = self.window.library.desktop_dir / f"appglider-{APP.id}.desktop"
         shortcut.unlink()
-        with patch("appharbour.window.QMessageBox.warning") as warning:
+        with patch("appglider.window.QMessageBox.warning") as warning:
             card.shortcut_requested.emit(APP.id)
             warning.assert_not_called()
         self.assertTrue(shortcut.is_file())
-        self.assertIn("Name=PhotoCraft (AppHarbour)", shortcut.read_text())
+        self.assertIn("Name=PhotoCraft (AppGlider)", shortcut.read_text())
 
     def test_legacy_external_link_does_not_appear_as_installed_or_updatable(self) -> None:
         path = Path(self.temp.name) / "solidcraft.AppImage"
@@ -833,15 +889,15 @@ class LibraryTests(unittest.TestCase):
 
     def test_install_update_and_rollback_through_background_ui(self) -> None:
         card = self.window.cards[APP.id]
-        with patch("appharbour.window.QMessageBox.warning") as warning:
+        with patch("appglider.window.QMessageBox.warning") as warning:
             for version in ("1.0.0", "1.1.0"):
                 payload = appimage_bytes(version.encode())
                 release = release_for(version, payload)
                 self.window.releases[APP.id] = release
                 self.window.refresh()
                 with (
-                    patch("appharbour.window.latest_release", return_value=release),
-                    patch("appharbour.releases.request", return_value=io.BytesIO(payload)),
+                    patch("appglider.window.latest_release", return_value=release),
+                    patch("appglider.releases.request", return_value=io.BytesIO(payload)),
                 ):
                     button = card.update_button if version == "1.1.0" else card.action_button
                     QTest.mouseClick(button, Qt.MouseButton.LeftButton)
@@ -860,16 +916,16 @@ class LibraryTests(unittest.TestCase):
         card = self.window.cards[APP.id]
         first_payload = appimage_bytes(b"1.0.0")
         first = release_for("1.0.0", first_payload)
-        with patch("appharbour.releases.request", return_value=io.BytesIO(first_payload)):
+        with patch("appglider.releases.request", return_value=io.BytesIO(first_payload)):
             self.window.library.install(APP, first, Event(), lambda *args: None)
         self.window.scan_installed()
         newer_payload = appimage_bytes(b"1.1.0")
         newer = release_for("1.1.0", newer_payload)
-        with patch("appharbour.window.QMessageBox.warning") as warning:
+        with patch("appglider.window.QMessageBox.warning") as warning:
             for latest, expected, version in ((first, "Updated 0 apps.", "1.0.0"),):
                 self.window.releases[APP.id] = newer
                 self.window.refresh()
-                with patch("appharbour.window.latest_release", return_value=latest):
+                with patch("appglider.window.latest_release", return_value=latest):
                     self.window.update_all()
                     self.wait_for_task()
                 self.assertEqual(self.window.footer.text(), expected)
@@ -877,8 +933,8 @@ class LibraryTests(unittest.TestCase):
             self.window.releases[APP.id] = newer
             self.window.refresh()
             with (
-                patch("appharbour.window.latest_release", return_value=newer),
-                patch("appharbour.releases.request", return_value=io.BytesIO(newer_payload)),
+                patch("appglider.window.latest_release", return_value=newer),
+                patch("appglider.releases.request", return_value=io.BytesIO(newer_payload)),
             ):
                 self.window.update_all()
                 self.wait_for_task()
@@ -889,12 +945,12 @@ class LibraryTests(unittest.TestCase):
 
     def test_busy_state_cancellation_and_launch_stays_available(self) -> None:
         payload = appimage_bytes()
-        with patch("appharbour.releases.request", return_value=io.BytesIO(payload)):
+        with patch("appglider.releases.request", return_value=io.BytesIO(payload)):
             self.window.library.install(
                 APP, release_for("1.0.0", payload), Event(), lambda *args: None
             )
         self.window.scan_installed()
-        with patch("appharbour.window.QThreadPool.globalInstance"):
+        with patch("appglider.window.QThreadPool.globalInstance"):
             self.window.start_task("Test operation", lambda cancel, progress: TaskResult("Done"))
         task = self.window.task
         self.assertIsNotNone(task)
@@ -940,7 +996,7 @@ class LibraryTests(unittest.TestCase):
             dialog.folder.setText(path)
             with (
                 self.subTest(path=path),
-                patch("appharbour.window.QMessageBox.warning") as warning,
+                patch("appglider.window.QMessageBox.warning") as warning,
             ):
                 dialog.accept()
                 warning.assert_called_once()
@@ -962,7 +1018,7 @@ class LibraryTests(unittest.TestCase):
         self.assertEqual(
             self.window.version_button.cursor().shape(), Qt.CursorShape.PointingHandCursor
         )
-        self.assertEqual(self.window.version_button.toolTip(), "About AppHarbour")
+        self.assertEqual(self.window.version_button.toolTip(), "About AppGlider")
         self.assertGreater(
             self.window.version_button.geometry().top(), self.window.scroll_area.geometry().bottom()
         )
@@ -1104,7 +1160,7 @@ class LibraryTests(unittest.TestCase):
         QTimer.singleShot(0, save)
         self.window.open_settings()
         self.assertFalse(self.settings.value("general/close-to-tray", True, type=bool))
-        with patch("appharbour.window.QSystemTrayIcon.isSystemTrayAvailable", return_value=True):
+        with patch("appglider.window.QSystemTrayIcon.isSystemTrayAvailable", return_value=True):
             self.window.tray.show()
             event = QCloseEvent()
             self.window.closeEvent(event)

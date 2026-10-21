@@ -1,8 +1,8 @@
 [Desktop Entry]
 Type=Application
-Name=AppHarbour
+Name=AppGlider
 Comment=Install, update and launch Linux AppImages
-Exec=appharbour
-Icon=appharbour
+Exec=appglider
+Icon=appglider
 Terminal=false
 Categories=Utility;

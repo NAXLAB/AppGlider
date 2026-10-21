@@ -9,10 +9,10 @@ from pathlib import Path
 from threading import Event
 from typing import Any
 
-from appharbour import github_status, releases
-from appharbour.catalog import App
-from appharbour.releases import Release
-from appharbour.storage import atomic_json
+from appglider import github_status, releases
+from appglider.catalog import App
+from appglider.releases import Release
+from appglider.storage import atomic_json
 
 
 @dataclass(frozen=True)

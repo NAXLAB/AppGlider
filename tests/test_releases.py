@@ -16,9 +16,9 @@ from urllib.parse import quote
 
 from test_library import APP, appimage_bytes, release_for
 
-from appharbour import releases
-from appharbour.catalog import custom_app
-from appharbour.storage import atomic_json
+from appglider import releases
+from appglider.catalog import custom_app
+from appglider.storage import atomic_json
 
 
 class Response(io.BytesIO):

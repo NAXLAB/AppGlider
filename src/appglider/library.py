@@ -16,8 +16,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from threading import Event
 
-from appharbour import APP_ICON
-from appharbour.catalog import (
+from appglider import APP_ICON
+from appglider.catalog import (
     APPS,
     App,
     custom_app,
@@ -26,8 +26,8 @@ from appharbour.catalog import (
     load_release_preferences,
     valid_build_variant,
 )
-from appharbour.icons import MAX_ICON_BYTES, normalise_icon
-from appharbour.releases import (
+from appglider.icons import MAX_ICON_BYTES, normalise_icon
+from appglider.releases import (
     VERSION,
     Progress,
     Release,
@@ -37,7 +37,7 @@ from appharbour.releases import (
     file_stamp,
     version_key,
 )
-from appharbour.storage import atomic_bytes, atomic_json
+from appglider.storage import atomic_bytes, atomic_json
 
 FREE_SPACE_MARGIN = 64 * 1024 * 1024
 MAX_LOG_BYTES = 5 * 1024 * 1024
@@ -376,7 +376,7 @@ class Library:
 
     def launch(self, app: App, installed: Installed) -> Path:
         if not installed.managed:
-            raise ValueError("Only apps installed by AppHarbour can be launched here.")
+            raise ValueError("Only apps installed by AppGlider can be launched here.")
         self._owned(app, installed.path)
         check_appimage(installed.path)
         if not os.access(installed.path, os.X_OK):
@@ -426,11 +426,11 @@ class Library:
         return log
 
     def _marker(self, app: App) -> str:
-        return f"AppHarbour\n{app.id}\n{app.repo}\n"
+        return f"AppGlider\n{app.id}\n{app.repo}\n"
 
     def _has_marker(self, root: Path, app: App) -> bool:
         try:
-            return (root / ".appharbour").read_text() == self._marker(app)
+            return (root / ".appglider").read_text() == self._marker(app)
         except (OSError, UnicodeDecodeError):
             return False
 
@@ -445,7 +445,7 @@ class Library:
             or path.suffix.lower() != ".appimage"
             or not self._has_marker(root, app)
         ):
-            raise ValueError("This path is not owned by AppHarbour; it was left untouched.")
+            raise ValueError("This path is not owned by AppGlider; it was left untouched.")
         return root
 
     def _clear_stale_stages(self, root: Path) -> None:
@@ -497,7 +497,7 @@ class Library:
         made_root = not root.exists()
         if made_root:
             root.mkdir(parents=True)
-            (root / ".appharbour").write_text(self._marker(app))
+            (root / ".appglider").write_text(self._marker(app))
         elif not self._has_marker(root, app):
             raise ValueError("The installation folder belongs to another application.")
         try:
@@ -527,7 +527,7 @@ class Library:
     def _remove_empty_root(self, root: Path) -> None:
         # Drop the ownership marker and folder only when nothing else is left inside.
         with contextlib.suppress(OSError):
-            marker = root / ".appharbour"
+            marker = root / ".appglider"
             if [entry.name for entry in root.iterdir()] == [marker.name]:
                 marker.unlink()
                 root.rmdir()
@@ -698,12 +698,12 @@ class Library:
                 with contextlib.suppress(OSError):
                     path.parent.rmdir()
             self._remove_empty_root(root)
-            shortcut = self.desktop_dir / f"appharbour-{app.id}.desktop"
+            shortcut = self.desktop_dir / f"appglider-{app.id}.desktop"
             try:
                 if (
                     not shortcut.is_symlink()
                     and shortcut.is_file()
-                    and "X-AppHarbour=true" in shortcut.read_text().splitlines()
+                    and "X-AppGlider=true" in shortcut.read_text().splitlines()
                 ):
                     shortcut.unlink()
             except OSError as error:
@@ -717,7 +717,7 @@ class Library:
         with self._lock():
             installed = self.records().get(app.id)
             if not installed or not installed.managed or not installed.path.is_file():
-                raise ValueError("Install this app with AppHarbour first.")
+                raise ValueError("Install this app with AppGlider first.")
             self._owned(app, installed.path)
             self._shortcut(app, installed.path)
 
@@ -727,11 +727,11 @@ class Library:
         An existing entry is kept while its target still exists, except that a packaged
         image newer than that target takes over. Development runs never repoint it.
         """
-        shortcut = self.desktop_dir / "appharbour.desktop"
+        shortcut = self.desktop_dir / "appglider.desktop"
         if shortcut.is_file() and not shortcut.is_symlink():
             lines = shortcut.read_text().splitlines()
             current = next((line[5:] for line in lines if line.startswith("Exec=")), "")
-            if "X-AppHarbour=true" in lines:
+            if "X-AppGlider=true" in lines:
                 if current == desktop_exec(arguments):
                     return shortcut
                 try:
@@ -746,31 +746,31 @@ class Library:
     def create_launcher_shortcut(self, arguments: list[str]) -> Path:
         command = desktop_exec(arguments)
         self.desktop_dir.mkdir(parents=True, exist_ok=True)
-        shortcut = self.desktop_dir / "appharbour.desktop"
+        shortcut = self.desktop_dir / "appglider.desktop"
         if shortcut.is_symlink() or (
-            shortcut.exists() and "X-AppHarbour=true" not in shortcut.read_text().splitlines()
+            shortcut.exists() and "X-AppGlider=true" not in shortcut.read_text().splitlines()
         ):
-            raise OSError("The existing AppHarbour shortcut belongs to another application.")
-        icon = self.data_dir / "icons" / "appharbour.png"
+            raise OSError("The existing AppGlider shortcut belongs to another application.")
+        icon = self.data_dir / "icons" / "appglider.png"
         if icon.parent.is_symlink() or icon.is_symlink():
             raise OSError("The shortcut icon path is a symbolic link; it was left untouched.")
         atomic_bytes(icon, APP_ICON.read_bytes())
         atomic_bytes(
             shortcut,
             (
-                "[Desktop Entry]\nType=Application\nName=AppHarbour\n"
+                "[Desktop Entry]\nType=Application\nName=AppGlider\n"
                 "Comment=Install, update and launch Linux AppImages\n"
                 f"Exec={command}\nIcon={icon}\nTerminal=false\n"
-                "Categories=Utility;\nX-AppHarbour=true\n"
+                "Categories=Utility;\nX-AppGlider=true\n"
             ).encode(),
         )
         return shortcut
 
     def _shortcut(self, app: App, path: Path) -> None:
         self.desktop_dir.mkdir(parents=True, exist_ok=True)
-        shortcut = self.desktop_dir / f"appharbour-{app.id}.desktop"
+        shortcut = self.desktop_dir / f"appglider-{app.id}.desktop"
         if shortcut.is_symlink() or (
-            shortcut.exists() and "X-AppHarbour=true" not in shortcut.read_text().splitlines()
+            shortcut.exists() and "X-AppGlider=true" not in shortcut.read_text().splitlines()
         ):
             raise OSError("An existing desktop shortcut is not owned by this launcher.")
         icon = self.data_dir / "icons" / f"{app.id}.png"
@@ -783,8 +783,8 @@ class Library:
         atomic_bytes(
             shortcut,
             (
-                f"[Desktop Entry]\nType=Application\nName={app.name} (AppHarbour)\n"
+                f"[Desktop Entry]\nType=Application\nName={app.name} (AppGlider)\n"
                 f"Exec={command} %F\nIcon={icon}\nTerminal=false\n"
-                "Categories=Graphics;\nX-AppHarbour=true\n"
+                "Categories=Graphics;\nX-AppGlider=true\n"
             ).encode(),
         )

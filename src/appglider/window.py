@@ -56,20 +56,20 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from appharbour import APP_ICON, APP_NAME, APP_VERSION, github_status
-from appharbour.catalog import APPS, App
-from appharbour.icons import icon_pixmap
-from appharbour.jobs import Task, TaskResult
-from appharbour.library import Installed, Library, Orphan
-from appharbour.release_checks import ReleaseChecks
-from appharbour.release_info import (
+from appglider import APP_ICON, APP_NAME, APP_VERSION, github_status
+from appglider.catalog import APPS, App
+from appglider.icons import icon_pixmap
+from appglider.jobs import Task, TaskResult
+from appglider.library import Installed, Library, Orphan
+from appglider.release_checks import ReleaseChecks
+from appglider.release_info import (
     ReleaseInfo,
     cached_info,
     discover_releases,
     info_path,
     remember_release,
 )
-from appharbour.releases import (
+from appglider.releases import (
     BuildChoiceRequired,
     Progress,
     Release,
@@ -83,8 +83,8 @@ from appharbour.releases import (
     variant_label,
     version_key,
 )
-from appharbour.repositories_dialog import RepositoriesDialog
-from appharbour.version_label import VersionLabel
+from appglider.repositories_dialog import RepositoriesDialog
+from appglider.version_label import VersionLabel
 
 CARD_MIN_WIDTH = 300
 
@@ -95,6 +95,28 @@ def icon_label(app: App, size: int, path: Path | None = None) -> QLabel:
     label.setPixmap(icon_pixmap(path or app.icon, size))
     label.setAccessibleName(f"{app.name} icon")
     return label
+
+
+# Appearance -> background, surface, text, muted text, border and accent colours. "System"
+# instead follows the desktop's own palette.
+THEMES: dict[str, tuple[str, ...]] = {
+    "Light": ("#f5f6fa", "#ffffff", "#202a3b", "#57647a", "#d5dce8", "#245dc2"),
+    "Dark": ("#171b24", "#212734", "#eff3fb", "#abb7cc", "#394458", "#91b6ff"),
+    "Forest": ("#1c1f1a", "#262b24", "#f4f3eb", "#b9b6a8", "#3d453a", "#8fae75"),
+    "Earthy": ("#2a2420", "#342d28", "#f6f1e7", "#c4b8a6", "#4d4239", "#d98a5b"),
+    "Sandstone": ("#2b2923", "#35332b", "#f7f4e9", "#c9c2ac", "#4a463a", "#d6b567"),
+}
+SYSTEM_THEME = "System"
+THEME_CHOICES = [SYSTEM_THEME, *THEMES]
+
+
+def blend_colours(top: QColor, bottom: QColor, weight: float) -> str:
+    """Return a hex colour made of `weight` of `top` over the rest of `bottom`."""
+    return QColor.fromRgbF(
+        weight * top.redF() + (1 - weight) * bottom.redF(),
+        weight * top.greenF() + (1 - weight) * bottom.greenF(),
+        weight * top.blueF() + (1 - weight) * bottom.blueF(),
+    ).name()
 
 
 class AppCard(QFrame):
@@ -289,7 +311,7 @@ class AppCard(QFrame):
                 ),
                 caption="Installed",
             )
-            self.status.setToolTip(f"Installed with AppHarbour\n{installed.path}")
+            self.status.setToolTip(f"Installed with AppGlider\n{installed.path}")
         stamp = datetime.fromtimestamp(info.checked_at).strftime("%d %b, %H:%M") if info else ""
         if refreshing:
             checked = "Refreshing releases…"
@@ -496,7 +518,7 @@ class OrphansDialog(QDialog):
         self.setMinimumWidth(560)
         layout = QVBoxLayout(self)
         intro = QLabel(
-            "These entries are in your AppHarbour library but match no application in the "
+            "These entries are in your AppGlider library but match no application in the "
             "current catalog, for example a repository that was removed. They are kept "
             "untouched unless you tick them. Forgetting an entry never deletes files."
         )
@@ -568,11 +590,12 @@ class SettingsDialog(QDialog):
         self.theme = QComboBox()
         self.theme.setItemDelegate(QStyledItemDelegate(self.theme))
         self.theme.setAccessibleName("Appearance")
-        self.theme.addItems(["System", "Light", "Dark"])
-        self.theme.setCurrentText(str(settings.value("appearance/theme", "System")))
-        appearance_form.addRow("Colour scheme", self.theme)
+        self.theme.addItems(THEME_CHOICES)
+        current_theme = str(settings.value("appearance/theme", SYSTEM_THEME))
+        self.theme.setCurrentText(current_theme if current_theme in THEME_CHOICES else SYSTEM_THEME)
+        appearance_form.addRow("Appearance", self.theme)
         general.addWidget(appearance)
-        self.close_to_tray = QCheckBox("Keep AppHarbour in the tray when closing its window")
+        self.close_to_tray = QCheckBox("Keep AppGlider in the tray when closing its window")
         self.close_to_tray.setChecked(
             bool(settings.value("general/close-to-tray", True, type=bool))
         )
@@ -585,7 +608,7 @@ class SettingsDialog(QDialog):
             Path(
                 QStandardPaths.writableLocation(QStandardPaths.StandardLocation.GenericDataLocation)
             )
-            / "appharbour"
+            / "appglider"
             / "apps"
         )
         self.folder = QLineEdit(str(settings.value("installation/folder", default_folder)))
@@ -642,8 +665,8 @@ class SettingsDialog(QDialog):
         about_note.setWordWrap(True)
         about.addWidget(about_note)
         for caption, url in (
-            ("View AppHarbour on GitHub", "https://github.com/Vyrnexis/AppHarbour"),
-            ("Report an issue", "https://github.com/Vyrnexis/AppHarbour/issues"),
+            ("View AppGlider on GitHub", "https://github.com/Vyrnexis/AppGlider"),
+            ("Report an issue", "https://github.com/Vyrnexis/AppGlider/issues"),
         ):
             button = QPushButton(caption)
             button.clicked.connect(
@@ -694,7 +717,7 @@ class LauncherWindow(QMainWindow):
             Path(
                 QStandardPaths.writableLocation(QStandardPaths.StandardLocation.GenericDataLocation)
             )
-            / "appharbour"
+            / "appglider"
         )
         self.library = (
             library
@@ -751,8 +774,8 @@ class LauncherWindow(QMainWindow):
         header.addStretch()
         self.version_button = QPushButton(f"v{APP_VERSION}")
         self.version_button.setObjectName("versionButton")
-        self.version_button.setAccessibleName(f"About AppHarbour {APP_VERSION}")
-        self.version_button.setToolTip("About AppHarbour")
+        self.version_button.setAccessibleName(f"About AppGlider {APP_VERSION}")
+        self.version_button.setToolTip("About AppGlider")
         self.version_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.version_button.clicked.connect(lambda: self.open_settings(3))
         settings_button = QPushButton("Settings")
@@ -836,12 +859,12 @@ class LauncherWindow(QMainWindow):
         self.scroll_area.viewport().installEventFilter(self)
         self.tray = QSystemTrayIcon(self.windowIcon(), self)
         self.tray_menu = QMenu(self)
-        self.tray_menu.addAction("Open AppHarbour").triggered.connect(self.show_launcher)
+        self.tray_menu.addAction("Open AppGlider").triggered.connect(self.show_launcher)
         self.tray_check_action = self.tray_menu.addAction("Refresh releases")
         self.tray_check_action.triggered.connect(lambda: self.refresh_releases(force=True))
         self.tray_apps_menu = self.tray_menu.addMenu("Installed apps")
         self.tray_menu.addSeparator()
-        self.tray_menu.addAction("Quit AppHarbour").triggered.connect(self.quit_launcher)
+        self.tray_menu.addAction("Quit AppGlider").triggered.connect(self.quit_launcher)
         self.tray_menu.aboutToShow.connect(self.scan_installed)
         self.tray.setContextMenu(self.tray_menu)
         self.tray.activated.connect(self.tray_activated)
@@ -908,7 +931,7 @@ class LauncherWindow(QMainWindow):
         update_count = sum(self.has_update(app.id) for app in self.apps)
         self.tabs.setTabText(1, f"Installed ({len(self.installed)})")
         self.tabs.setTabText(2, f"Updates ({update_count})")
-        self.tray.setToolTip(f"AppHarbour · Updates: {update_count}")
+        self.tray.setToolTip(f"AppGlider · Updates: {update_count}")
         self.tray_check_action.setEnabled(not self.checks.busy and bool(self.installed))
         tray_apps = [
             (app, self.library.icon_path(app)) for app in self.apps if app.id in self.installed
@@ -1134,7 +1157,7 @@ class LauncherWindow(QMainWindow):
                         self.releases[app.id] = release
             self.installed = installed
             if self.task is None:
-                self.footer.setText(f"{len(self.installed)} apps installed with AppHarbour.")
+                self.footer.setText(f"{len(self.installed)} apps installed with AppGlider.")
         self.refresh()
 
     def launch_app(self, app_id: str) -> None:
@@ -1195,7 +1218,7 @@ class LauncherWindow(QMainWindow):
         except (OSError, ValueError) as error:
             QMessageBox.warning(self, "Cannot create shortcut", str(error))
         else:
-            self.footer.setText(f"Created menu shortcut: {app.name} (AppHarbour).")
+            self.footer.setText(f"Created menu shortcut: {app.name} (AppGlider).")
 
     def task_progress(self, message: str, received: int, total: int) -> None:
         self.footer.setText(message)
@@ -1415,7 +1438,7 @@ class LauncherWindow(QMainWindow):
         answer = QMessageBox.question(
             self,
             f"Remove {app.name}?",
-            "Remove this app and its previous version from AppHarbour?\n"
+            "Remove this app and its previous version from AppGlider?\n"
             "Your documents and application settings will be kept.",
         )
         if answer != QMessageBox.StandardButton.Yes:
@@ -1465,15 +1488,22 @@ class LauncherWindow(QMainWindow):
         app = QApplication.instance()
         if not isinstance(app, QApplication):
             return
-        theme = str(self.settings.value("appearance/theme", "System"))
-        dark = theme == "Dark" or (
-            theme == "System" and app.styleHints().colorScheme() == Qt.ColorScheme.Dark
-        )
-        background, surface, foreground, muted, border, accent = (
-            ("#171b24", "#212734", "#eff3fb", "#abb7cc", "#394458", "#91b6ff")
-            if dark
-            else ("#f5f6fa", "#ffffff", "#202a3b", "#57647a", "#d5dce8", "#245dc2")
-        )
+        theme = str(self.settings.value("appearance/theme", SYSTEM_THEME))
+        if theme in THEMES:
+            background, surface, foreground, muted, border, accent = THEMES[theme]
+            on_accent = background
+        else:
+            app.setPalette(QPalette())
+            native = app.palette()
+            window = native.color(QPalette.ColorRole.Window)
+            text = native.color(QPalette.ColorRole.WindowText)
+            background, foreground = window.name(), text.name()
+            surface = native.color(QPalette.ColorRole.Base).name()
+            muted = blend_colours(text, window, 0.35)
+            border = blend_colours(text, window, 0.2)
+            accent = native.color(QPalette.ColorRole.Highlight).name()
+            on_accent = native.color(QPalette.ColorRole.HighlightedText).name()
+        dark = QColor(background).lightness() < 128
         palette = QPalette()
         for role, color in (
             (QPalette.ColorRole.Window, background),
@@ -1486,12 +1516,13 @@ class LauncherWindow(QMainWindow):
             (QPalette.ColorRole.ToolTipBase, surface),
             (QPalette.ColorRole.ToolTipText, foreground),
             (QPalette.ColorRole.Highlight, accent),
-            (QPalette.ColorRole.HighlightedText, background),
+            (QPalette.ColorRole.HighlightedText, on_accent),
             (QPalette.ColorRole.PlaceholderText, muted),
         ):
             palette.setColor(role, QColor(color))
         palette.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.ButtonText, QColor(muted))
-        app.setPalette(palette)
+        if theme in THEMES:
+            app.setPalette(palette)
         app.setStyleSheet(f"""
             QWidget {{ font-size: 14px; }}
             QMainWindow, QDialog {{ background: {background}; }}
@@ -1525,7 +1556,7 @@ class LauncherWindow(QMainWindow):
             QPushButton:focus, QToolButton:focus, QLineEdit:focus, QComboBox:focus {{
                 border: 2px solid {accent}; }}
             QPushButton:disabled {{ color: {muted}; background: {background}; }}
-            QPushButton#primary {{ background: {accent}; color: {background};
+            QPushButton#primary {{ background: {accent}; color: {on_accent};
                 border-color: {accent}; font-weight: 600; }}
             QPushButton#primary:hover {{ border-color: {foreground}; }}
             QPushButton#primary:disabled {{ background: {surface}; color: {muted};
@@ -1560,10 +1591,10 @@ class LauncherWindow(QMainWindow):
                 border: 1px solid {border}; border-radius: 7px; padding: 9px; }}
             QComboBox QAbstractItemView {{ background: {surface}; color: {foreground};
                 border: 1px solid {border}; padding: 4px; outline: 0;
-                selection-background-color: {accent}; selection-color: {background}; }}
+                selection-background-color: {accent}; selection-color: {on_accent}; }}
             QComboBox QAbstractItemView::item {{ min-height: 32px; padding: 4px 10px; }}
             QComboBox QAbstractItemView::item:selected {{ background: {accent};
-                color: {background}; }}
+                color: {on_accent}; }}
             QAbstractItemView QLineEdit, QAbstractItemView QLineEdit:focus {{
                 padding: 0; border: 1px solid {accent}; border-radius: 2px; }}
             QScrollArea, QScrollArea > QWidget > QWidget {{ background: {background}; }}

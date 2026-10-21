@@ -19,9 +19,9 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import quote, unquote, urljoin, urlsplit
 from urllib.request import HTTPRedirectHandler, OpenerDirector, Request, build_opener
 
-from appharbour import APP_VERSION, github_status
-from appharbour.catalog import App
-from appharbour.storage import atomic_json
+from appglider import APP_VERSION, github_status
+from appglider.catalog import App
+from appglider.storage import atomic_json
 
 CACHE_SECONDS = 5 * 60
 RELEASE_PAGES = 3
@@ -165,7 +165,7 @@ def request(url: str, *, method: str = "GET", etag: str = "") -> Any:
     host = urlsplit(url).netloc
     if _RETRY_AFTER.get(host, 0) > time.time():
         raise RateLimited(host, _RETRY_AFTER[host])
-    headers = {"User-Agent": f"AppHarbour/{APP_VERSION}"}
+    headers = {"User-Agent": f"AppGlider/{APP_VERSION}"}
     if etag:
         headers["If-None-Match"] = etag
     req = Request(url, headers=headers, method=method)

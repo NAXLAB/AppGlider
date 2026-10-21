@@ -11,7 +11,7 @@ from pathlib import Path
 
 def main() -> None:
     image = Path(sys.argv[1]).resolve()
-    with tempfile.TemporaryDirectory(prefix="appharbour first run ") as temporary:
+    with tempfile.TemporaryDirectory(prefix="appglider first run ") as temporary:
         home = Path(temporary)
         environment = {
             key: value
@@ -40,7 +40,7 @@ def main() -> None:
         report = next(
             json.loads(line) for line in result.stdout.splitlines() if line.startswith("{")
         )
-        assert report["app"] == "AppHarbour" and report["icon"], report
+        assert report["app"] == "AppGlider" and report["icon"], report
         project = Path(__file__).resolve().parents[1] / "pyproject.toml"
         version = tomllib.loads(project.read_text())["project"]["version"]
         assert report["version"] == version, report
@@ -54,7 +54,7 @@ def main() -> None:
         assert Path(report["prefix"]).is_relative_to(report["appdir"]), report
         assert report["command"] == [str(image)], report
         assert Path(report["data"]).is_relative_to(home), report
-        shortcut = home / ".local/share/applications/appharbour.desktop"
+        shortcut = home / ".local/share/applications/appglider.desktop"
         assert str(image) in shortcut.read_text(), shortcut.read_text()
         assert report["appdir"] not in shortcut.read_text(), shortcut.read_text()
         print(json.dumps(report, indent=2))

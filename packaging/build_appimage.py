@@ -55,14 +55,14 @@ def main() -> None:
     wheel_dir = BUILD / "wheels"
     wheel_dir.mkdir(exist_ok=True)
     run(sys.executable, "-m", "pip", "wheel", "--no-deps", "--wheel-dir", str(wheel_dir), str(ROOT))
-    wheel = wheel_dir / f"appharbour-{version}-py3-none-any.whl"
+    wheel = wheel_dir / f"appglider-{version}-py3-none-any.whl"
     # Keep staging disposable; never include the source tree or a user's library.
     with tempfile.TemporaryDirectory(prefix="stage-", dir=BUILD) as staging:
         stage = Path(staging)
-        recipe = stage / "appharbour"
+        recipe = stage / "appglider"
         recipe.mkdir()
-        shutil.copy2(PACKAGING / "appharbour.desktop", recipe)
-        shutil.copy2(ROOT / "src/appharbour/assets/icons/appharbour.png", recipe)
+        shutil.copy2(PACKAGING / "appglider.desktop", recipe)
+        shutil.copy2(ROOT / "src/appglider/assets/icons/appglider.png", recipe)
         (recipe / "requirements.txt").write_text(
             (PACKAGING / "runtime-requirements.txt").read_text() + f"\n{wheel}\n"
         )
@@ -78,7 +78,7 @@ def main() -> None:
             str(recipe),
             cwd=stage,
         )
-        appdir = stage / "AppHarbour-x86_64"
+        appdir = stage / "AppGlider-x86_64"
         (appdir / "AppRun").unlink()
         shutil.copy2(PACKAGING / "AppRun", appdir / "AppRun")
         (appdir / "AppRun").chmod(0o755)
@@ -95,13 +95,13 @@ def main() -> None:
                     shutil.copy2(lib, libdir / lib.name, follow_symlinks=False)
                 copyright_file = directory / "usr/share/doc" / name / "copyright"
                 if copyright_file.is_file():
-                    notices = appdir / "usr/share/doc/appharbour/bundled-libraries"
+                    notices = appdir / "usr/share/doc/appglider/bundled-libraries"
                     notices.mkdir(parents=True, exist_ok=True)
                     shutil.copy2(copyright_file, notices / f"{name}.copyright")
         trim(appdir)
         output = ROOT / "dist"
         output.mkdir(exist_ok=True)
-        image = output / f"AppHarbour-{version}-linux-x86_64.AppImage"
+        image = output / f"AppGlider-{version}-linux-x86_64.AppImage"
         staged_image = stage / image.name
         os.environ["ARCH"] = "x86_64"
         os.environ["VERSION"] = version

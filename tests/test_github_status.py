@@ -12,8 +12,8 @@ from test_library import APP, appimage_bytes, release_for
 from test_prereleases import metadata
 from test_releases import Response
 
-from appharbour import github_status, releases
-from appharbour.release_info import discover_releases
+from appglider import github_status, releases
+from appglider.release_info import discover_releases
 
 
 class GitHubStatusTests(unittest.TestCase):

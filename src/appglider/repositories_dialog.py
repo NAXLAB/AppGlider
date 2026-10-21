@@ -27,26 +27,26 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from appharbour import APP_ICON
-from appharbour.catalog import APPS, App, custom_app
-from appharbour.icons import (
+from appglider import APP_ICON
+from appglider.catalog import APPS, App, custom_app
+from appglider.icons import (
     MAX_ICON_BYTES,
     IconCandidate,
     discover_icons,
     icon_pixmap,
     normalise_icon,
 )
-from appharbour.jobs import Task, TaskResult
-from appharbour.library import Library
-from appharbour.release_info import remember_release
-from appharbour.releases import (
+from appglider.jobs import Task, TaskResult
+from appglider.library import Library
+from appglider.release_info import remember_release
+from appglider.releases import (
     Progress,
     Release,
     architecture,
     latest_release,
     variant_label,
 )
-from appharbour.version_label import VersionLabel
+from appglider.version_label import VersionLabel
 
 
 class RepositoriesDialog(QDialog):
@@ -324,7 +324,7 @@ class RepositoriesDialog(QDialog):
         self.detail_note.setText(
             "Choose an icon for the library, tray and application menu."
             if self.icon_target
-            else "Included with AppHarbour. This repository is managed by the built-in catalog."
+            else "Included with AppGlider. This repository is managed by the built-in catalog."
         )
         self.set_icon_options(())
         if self.icon_target:
@@ -340,7 +340,7 @@ class RepositoriesDialog(QDialog):
         elif app:
             self.show_icon(app.icon)
             self.icon_choices.setItemText(0, "Built-in icon")
-            self.status.setText("Built-in application icons are included with AppHarbour.")
+            self.status.setText("Built-in application icons are included with AppGlider.")
         self.set_busy(False)
 
     def start_add_repository(self) -> None:
@@ -642,7 +642,7 @@ class RepositoriesDialog(QDialog):
             self.icon_choices.setItemData(
                 self.icon_choices.count() - 1, icon.name, Qt.ItemDataRole.ToolTipRole
             )
-        self.icon_choices.addItem("AppHarbour default")
+        self.icon_choices.addItem("AppGlider default")
         self.icon_choices.blockSignals(False)
         self.selected_icon = icons[0].png if icons else None
         self.show_icon(self.selected_icon if self.selected_icon is not None else APP_ICON)

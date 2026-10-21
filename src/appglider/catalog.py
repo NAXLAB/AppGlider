@@ -6,7 +6,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from appharbour import APP_ICON
+from appglider import APP_ICON
 
 ASSETS = Path(__file__).parent / "assets"
 
