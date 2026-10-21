@@ -174,6 +174,8 @@ Settings has General, Applications, Storage and About sections.
 The version button at the bottom right opens About. It highlights on hover or keyboard focus.
 Choose the Appearance and the folder for new installations. Appearance is System (default,
 your desktop's own colours), Light, Dark, or one of the Forest, Earthy and Sandstone themes.
+The window previews each Appearance choice as you pick it; **Save** keeps it, while
+**Cancel** or closing Settings restores the saved one.
 Changing the folder leaves existing installations in place; their updates stay with them.
 
 AppGlider creates its own menu entry. Managed apps get entries such as

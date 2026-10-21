@@ -1043,7 +1043,11 @@ class LauncherWindow(QMainWindow):
         dialog.sections.setCurrentRow(section)
         dialog.repositories_button.setEnabled(self.task is None)
         dialog.repositories_requested.connect(lambda: self.open_repositories())
-        if dialog.exec() == QDialog.DialogCode.Accepted:
+        dialog.theme.currentTextChanged.connect(self.apply_theme)
+        accepted = dialog.exec() == QDialog.DialogCode.Accepted
+        if not accepted:
+            self.apply_theme()
+        if accepted:
             self.settings.setValue("general/close-to-tray", dialog.close_to_tray.isChecked())
             self.settings.setValue("appearance/theme", dialog.theme.currentText())
             self.settings.setValue("installation/folder", dialog.folder.text())
@@ -1484,11 +1488,11 @@ class LauncherWindow(QMainWindow):
         self.tray.hide()
         super().closeEvent(event)
 
-    def apply_theme(self) -> None:
+    def apply_theme(self, preview: str | None = None) -> None:
         app = QApplication.instance()
         if not isinstance(app, QApplication):
             return
-        theme = str(self.settings.value("appearance/theme", SYSTEM_THEME))
+        theme = preview or str(self.settings.value("appearance/theme", SYSTEM_THEME))
         if theme in THEMES:
             background, surface, foreground, muted, border, accent = THEMES[theme]
             on_accent = background

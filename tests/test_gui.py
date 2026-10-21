@@ -391,11 +391,16 @@ class LibraryTests(unittest.TestCase):
             dialog = self.qt.activeModalWidget()
             if isinstance(dialog, SettingsDialog):
                 dialog.theme.setCurrentText("Light")
+                self.assertEqual(
+                    self.qt.palette().color(QPalette.ColorRole.Window).name(), "#f5f6fa"
+                )
+                self.assertEqual(self.settings.value("appearance/theme"), "Dark")
                 dialog.reject()
 
         QTimer.singleShot(0, cancel_settings)
         self.window.open_settings()
         self.assertEqual(self.settings.value("appearance/theme"), "Dark")
+        self.assertEqual(self.qt.palette().color(QPalette.ColorRole.Window).name(), "#171b24")
 
     def test_appearance_choices_switch_and_persist(self) -> None:
         def window_colour() -> str:
