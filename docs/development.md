@@ -7,7 +7,8 @@ src/appglider/   Application code, icons and asset licences
 tests/           Automated application tests
 packaging/       AppImage scripts, entry point and dependency locks
 .github/         GitHub Actions workflow
-docs/            Usage, development and build documentation
+docs/            User guide, technical notes, roadmap, development and build docs,
+                 example catalogs and branding sources
 ```
 
 Local generated directories are ignored by Git:
@@ -39,8 +40,10 @@ python3 -m venv .venv
 .venv/bin/python -m unittest discover -s tests -q
 ```
 
-GUI tests use Qt's offscreen platform, disposable settings and controlled downloads.
-They do not install creative applications into the user's library.
+Run the tests with `QT_QPA_PLATFORM=offscreen` set if you have no display. GUI tests use
+Qt's offscreen platform, disposable settings and controlled downloads, so they never touch
+your real AppGlider library or install real apps. `tests/catalog_fixture.py` provides the
+example catalog's apps to tests that need a library with apps in it.
 
 ## Build the AppImage
 
@@ -58,10 +61,12 @@ The version comes from `pyproject.toml`.
 Test the package without FUSE, using a disposable first-run home:
 
 ```sh
-python3 packaging/smoke_test.py dist/AppGlider-0.4.0-linux-x86_64.AppImage
+python3 packaging/smoke_test.py dist/AppGlider-<version>-linux-x86_64.AppImage
 ```
 
-Verify its checksum from inside `dist/` with `sha256sum -c SHA256SUMS.txt`.
+The smoke test runs twice: once as an empty first run, and once with two sample repositories
+so the app cards are exercised too. Verify the checksum from inside `dist/` with
+`sha256sum -c SHA256SUMS.txt`.
 Before a release, also exercise the tray, folder picker, themes and launching on real
 X11/Wayland desktops. The headless check does not qualify those interactions.
 
@@ -98,4 +103,15 @@ Extracted AppImages, old comparison builds, logs and tool caches are disposable.
 Keep `.backups/` separate from build output, and retain `dist/` while testing the current
 AppImage. Recreating `build/packaging-env` and cached downloads requires network access.
 
-See [GitHub Actions](builds.md) for the automated build process.
+See [GitHub Actions](builds.md) for the automated build process, and the
+[technical notes](technical-notes.md) for how the application itself behaves.
+
+## Documentation
+
+- `README.md` and `docs/usage.md` are for everyday users, who are not expected to be
+  technical: plain language, no jargon, and what to try when something goes wrong.
+- `docs/technical-notes.md` holds the detail (release matching, request budgets, files,
+  recovery). Put new technical explanations there and link to them from the guide.
+- Update `docs/usage.md` whenever a button, menu item or setting changes, and re-take the
+  README screenshot (`docs/previews/appglider-library.png`, default appearance) after visible
+  interface changes.

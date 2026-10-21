@@ -1,0 +1,191 @@
+# Technical notes
+
+How AppGlider works under the hood. You do not need any of this to use it; the
+[user guide](usage.md) covers everyday use. These notes are for the curious, for people
+who want to know exactly what AppGlider does with their system, and for contributors.
+
+## Contents
+
+- [How release checks work](#how-release-checks-work)
+- [GitHub's request allowance](#githubs-request-allowance)
+- [Stable and preview versions](#stable-and-preview-versions)
+- [Which file is downloaded](#which-file-is-downloaded)
+- [Checksums](#checksums)
+- [Icons](#icons)
+- [Catalog files](#catalog-files)
+- [Files AppGlider keeps](#files-appglider-keeps)
+- [Menu entries](#menu-entries)
+- [Library recovery](#library-recovery)
+
+## How release checks work
+
+- Startup, scheduled and **Refresh releases** checks cover installed apps only. Checking
+  an app you have not installed happens only when you inspect a repository or choose
+  **Check releases** in its details. With no installed apps, startup makes no release
+  requests.
+- Release information is read from GitHub's metadata. AppGlider never downloads an app
+  just to look at it or to check for updates.
+- Results less than five minutes old are reused; older results are refreshed. **Refresh
+  releases** and the details' **Check releases** ignore that window.
+- Checked information is kept across restarts and shown first, so a card can show what was
+  known before the new check finishes. Cards show when the information was checked and
+  whether a refresh failed. A failed check keeps the last known versions and badges.
+- Background checks run one app at a time, or up to three at once while GitHub reports at
+  least 30 requests left. Launching apps and changing preferences stay available meanwhile.
+- Installing re-checks the release using your saved preference and the same five-minute
+  cache, confirms there is enough free disk space (the download size plus 64 MiB),
+  downloads the file, and rejects it if the server's reported size differs from the
+  published size. A failed or cancelled download leaves the installed version untouched.
+- AppGlider itself is updated by replacing its AppImage with a newer one and starting it;
+  it does not update itself.
+
+## GitHub's request allowance
+
+AppGlider needs no GitHub account or token. It uses GitHub's public API, which allows
+60 requests per hour per network address without signing in.
+
+- The API normally takes two metadata requests per repository (the latest stable release
+  and a listing of recent releases). Checksums can need more.
+- Answers are stored with their ETag, so repeat requests are conditional and an unchanged
+  answer (HTTP 304) is reused. For anonymous requests a 304 still counts against the
+  allowance, so a check costs about one request per installed app whether or not anything
+  changed.
+- A scheduled check is skipped while GitHub last reported fewer than 30 requests left,
+  while a download or another check is running, and when nothing is installed.
+- When the allowance runs out, AppGlider falls back to GitHub's public release pages for
+  up to three pages of ten releases, applying the same selection rules.
+- The **GitHub** indicator beside the version button opens **Settings → Applications**,
+  showing the last reported allowance, active retry countdowns and the most recent
+  successful result with its repository, source (GitHub API, public pages or cached) and
+  time. Opening it makes no network requests. Counts come from earlier GitHub responses and
+  can also be affected by other programs on your network. After a request window expires the
+  count becomes unknown until the next response; AppGlider does not assume the full
+  allowance is available. Retry times survive restarts.
+
+## Stable and preview versions
+
+- GitHub's own flags decide whether a release is stable or a preview. Draft releases are
+  excluded, and tags AppGlider cannot read as versions are ignored.
+- **Stable and prerelease versions** picks the highest supported version among up to 100
+  recent releases, plus GitHub's designated latest stable release. For example
+  `1.3.0-beta.10` follows `1.3.0-beta.2`, and `1.3.0` follows both, so a final release
+  replaces a beta once it is newer.
+- Turning previews off keeps an installed preview launchable and waits for a newer stable
+  release. AppGlider never downgrades automatically; **Roll back** is the explicit way to
+  go back.
+- Supported tags include `v1.2.3`, `1.2.3`, `v1.2.3-beta.1`, short versions such as `v0.6`
+  and four-part versions such as `v02.08.02.61`. Project prefixes such as `studio-v0.6.0`,
+  `release-1.2.3` and `app/v1.2.3` also work. The original tag is kept in download URLs;
+  only its numeric version is used for comparing. A missing patch number counts as zero
+  (`0.6` equals `0.6.0`), and numbers are compared as numbers.
+- If the newest eligible version has no compatible AppImage or checksum, AppGlider says so
+  instead of quietly choosing an older download. A project that publishes only previews
+  must have previews enabled before it can be added.
+
+## Which file is downloaded
+
+- AppGlider looks at the release's real file list for names ending in `.AppImage`,
+  ignoring letter case. The repository name, where the version sits, the separators and
+  the word `linux` are not required. Companion files such as `.AppImage.zsync` and
+  `.AppImage.asc` are ignored.
+- CPU labels are matched to your machine: `x86_64`, `x86-64`, `x64` and `amd64` mean
+  x86_64; `aarch64` and `arm64` mean ARM64. An explicit match beats an unlabelled file. A
+  single unlabelled file is allowed. Before anything is activated, the downloaded file's
+  own CPU type and AppImage header are checked. The AppGlider package itself is built for
+  Linux x86_64 only.
+- When several files fit, familiar filenames keep their existing preference. If that does
+  not settle it, a **Build variant** choice appears (for example Bambu Studio's Ubuntu
+  22.04 or 24.04 builds). The choice is remembered separately from the stable/preview
+  choice and follows that build across releases, ignoring version numbers and build dates.
+  Change it under **⋯ → Application preferences… → Build variant → Choose another build…**.
+- AppGlider does not detect which distribution a build suits. Follow the project's own
+  guidance.
+- If a saved variant disappears or becomes ambiguous, the installed card shows **Choose
+  build**. AppGlider keeps the installed copy and waits for your choice rather than
+  switching builds. Choosing a build never downloads anything, and a changed preference
+  affects future installs and updates, not the installed copy. Upstream filename changes can
+  need confirmation too: Bambu Studio's `ubuntu22.04` and `ubu22` names count as different
+  variants until you pick the new one.
+
+## Checksums
+
+A published SHA-256 checksum is required before anything is installed. AppGlider uses
+GitHub's own asset digest when available, otherwise a matching entry in the release's
+`SHA256SUMS.txt`. When the API allowance is exhausted, the public-page fallback reads
+the asset links and filename-labelled digests from GitHub's public release listing. If
+GitHub changes that page or no checksum can be found, AppGlider stops and explains why.
+
+## Icons
+
+- While adding a repository, AppGlider looks for likely icon files in it and previews the
+  candidates. You can also choose a local PNG or a self-contained SVG. Selected icons are
+  saved locally and keep working offline.
+- Images are limited to 2 MiB and 4096 pixels per side and are converted to a PNG of at
+  most 512 pixels per side. SVGs that reference external resources or declare a document
+  type are rejected.
+- Only a bounded set of likely repository files is examined, so some projects need a manual
+  choice. A missing icon or a quota error never stops a valid repository from being added.
+  Icons inside the AppImage itself are not extracted.
+- Searching for icons costs at least two GitHub requests per app, so AppGlider does it only
+  when you ask, never for many apps at once.
+- The apps in the ArtCraft example catalog use icons bundled with AppGlider.
+
+## Catalog files
+
+A catalog is TOML with `format = 1`, an optional `name` and one `[[app]]` table per
+repository:
+
+| Key | Required | Meaning |
+| --- | --- | --- |
+| `repo` | yes | `owner/repository` or `https://github.com/owner/repository` |
+| `name` | no | Display name; defaults to the repository name |
+| `description` | no | Plain text, up to 200 characters |
+| `stable_only` | no | Default `true`; `false` includes previews |
+| `build` | no | Exact AppImage filename to prefer |
+
+- Each entry goes through the same checks as adding a repository by hand (GitHub only, no
+  query strings or odd characters). Bad entries are listed and skipped; keys AppGlider does
+  not know are ignored and listed.
+- A file that is not valid TOML, lacks `format = 1`, is larger than 256 KiB or lists more
+  than 100 apps imports nothing. The library holds at most 100 repositories in total.
+- Import never changes an app you already have, makes no network requests and installs
+  nothing. Names and descriptions are shown as plain text, never as formatted text.
+- The 14 apps in the example catalog keep the identifiers they always had (for example
+  `photocraft`), which is how apps installed before the catalog existed match again when it
+  is imported.
+
+## Files AppGlider keeps
+
+| What | Where |
+| --- | --- |
+| Library, repository list, release cache, icons, locks | `~/.local/share/appglider/` (follows `XDG_DATA_HOME`) |
+| Installed apps | `~/.local/share/appglider/apps/` unless you chose another folder |
+| Settings | `~/.config/AppGlider/AppGlider.conf` (follows `XDG_CONFIG_HOME`) |
+| Menu entries | `~/.local/share/applications/appglider*.desktop` |
+| Logs of apps that failed to start | `~/.local/share/appglider/logs/` |
+
+Each install folder holds a small `.appglider` marker. That marker is how AppGlider knows
+which files it owns; it never touches AppImages, documents or settings it did not install.
+Library and settings changes are written atomically, so a crash cannot leave a half-written
+file. A corrupt file is preserved and reported, never overwritten with an empty library.
+Only one AppGlider runs per data folder; starting it again raises the running window.
+
+## Menu entries
+
+- AppGlider writes `appglider.desktop` for itself and `appglider-<app>.desktop` for each
+  managed app, marked `X-AppGlider=true` so it only ever edits its own.
+- Its own entry is rewritten only when it is missing, when its target no longer exists, or
+  when a newer packaged AppImage takes over. A development run never repoints a working
+  entry. The entry's icon copy is refreshed whenever a new release ships a different icon.
+- Some apps add their own entry the first time they run, such as
+  `ai.storyteller.solidcraft.desktop`. AppGlider does not create or edit these. When you
+  uninstall the app, any entry in your applications folder whose command is one of the
+  removed AppImages is deleted; entries for other programs are untouched.
+
+## Library recovery
+
+If the library contains an entry for an app that is not in your repository list (a removed
+repository, or apps installed before you imported the example catalog), the entry is kept
+untouched and a footer button **Review N unrecognised entries…** appears. Tick entries to
+forget them. Nothing is forgotten without confirmation, and files on disk are never deleted.
+Unreadable or malformed library files are preserved and reported.

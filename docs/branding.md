@@ -1,4 +1,6 @@
-# AppGlider
+# AppGlider branding and identity
+
+This page is for contributors and designers.
 
 AppGlider is the user-facing name. Its icon is a swept wing of three
 S-curved feathers in three greens (`#8FAE75`, `#5B7F52`, `#3F5E3A`) on a transparent

@@ -42,8 +42,8 @@ before GitHub can execute it.
 
 To prepare a release:
 
-1. Set the version in `pyproject.toml`, for example `0.2.3`, and update the documented run
-   commands. The interface and HTTP User-Agent read the installed package version.
+1. Set the version in `pyproject.toml`, for example `0.2.3`, and any version numbers written
+   in the docs. The interface and HTTP User-Agent read the installed package version.
    Reinstall an editable development checkout after a version change. Commit the changes.
 2. Push that commit to the GitHub repository.
 3. Create and push the matching tag:

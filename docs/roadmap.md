@@ -1,49 +1,37 @@
 # Roadmap
 
-Planned improvements for AppGlider have no promised release dates or fixed implementation
-order. Designs may change after discussion.
+Ideas for where AppGlider could go next. There are no promised dates or order, and plans
+change after discussion. Something being listed here is not a promise that it will be built.
 
 ## Planned
 
-- **Installation queue:** queue multiple installs or updates with clear progress and
-  cancellation controls.
-- **AppGlider updates:** check for launcher updates, show release notes and offer an
-  explicit update action.
-- **Storage overview:** show space used by managed applications and their retained
-  rollback versions, with controls for removing an unwanted rollback copy.
+- **Install queue:** line up several installs or updates, with clear progress and a way to
+  cancel.
+- **AppGlider updating itself:** check for new versions of AppGlider, show what changed and
+  offer an update button. Today you update AppGlider by downloading the new AppImage.
+- **Storage overview:** show how much space your apps use, including the old versions kept
+  for roll back, and let you delete an old copy you no longer need.
 
-## Completed
+## Under discussion
 
-- **Scheduled update checks and a tray update badge:** a General setting (every 3, 6, 12
-  or 24 hours, or manual) and an amber badge on the tray icon while updates wait. See the
-  [usage guide](usage.md#scheduled-update-checks-and-the-tray-badge). A system
-  notification when updates appear is not built.
-- **Empty first run:** a new library is empty and offers **+ Add app** and **Import catalog…**.
-  The ArtCraft apps and SolidCraft are an example catalog in `docs/catalogs/`, not a built-in
-  list; every app can be removed. Those apps keep their bundled icons and established ids,
-  so installs made before importing are recognised again once the catalog is imported.
-- **Import/export catalogs:** import and export plain-text TOML catalogs from the
-  Repositories dialog, with a preview before anything is added. An example for the ArtCraft
-  apps and SolidCraft is in `docs/catalogs/`. See the [usage guide](usage.md#import-and-export-catalogs).
-- **GitHub request status:** a footer indicator and details in Settings show the last
-  reported API allowance, retry times, the most recent release-information source and
-  when that information was checked. Opening the status panel makes no requests.
+- **Arranging and hiding cards:** hide apps you do not use and put the rest in your own
+  order. Still to decide: drag and drop or buttons, how a custom order works with search and
+  the tabs, how to bring a hidden app back, and keyboard use. Hiding an app would never
+  remove it or its installed files.
+- **Desktop notification for updates:** a pop-up message when a new update appears. The
+  tray badge and tooltip already show waiting updates; a notification would be optional.
+- **Offline starter catalog:** a copy of the example catalog built into AppGlider, with an
+  **Import starter catalog** button, so a first run does not need the file downloaded. Today
+  the example is in the repository ([`catalogs/artcraft.toml`](catalogs/artcraft.toml)).
 
-## Library customisation — design discussion
+## Done
 
-Explore hiding unwanted applications and letting users arrange cards in their preferred
-order. The interaction needs further discussion before implementation, including:
-
-- Whether cards should move by drag-and-drop, an explicit arrangement mode, or move controls.
-- How a saved custom order interacts with searching and the All apps, Installed and Updates views.
-- How hidden applications are restored and how installed apps with updates remain discoverable.
-- Keyboard access and preserving the layout across restarts and different window sizes.
-
-Hiding a card should preserve its repository definition and any installed AppImage.
-
-## Offline starter catalog — proposal
-
-Ship a copy of the example catalog inside the AppImage with an **Import starter catalog**
-action, so the first run works without downloading the file. Not started; the example is
-currently published in the repository (`docs/catalogs/artcraft.toml`) and can be attached to
-each release.
+- **Scheduled update checks and a tray badge:** choose how often AppGlider checks (every
+  3, 6, 12 or 24 hours, or only when you ask), and see an amber badge on the tray icon
+  while updates are waiting.
+- **A fresh start for new users:** the library is empty at first, and the ArtCraft apps and
+  SolidCraft are an example catalog you can import instead of being built in.
+- **Catalogs:** import and export plain text lists of apps, with a preview before anything
+  is added.
+- **GitHub status:** a footer label and a settings page show how many of GitHub's
+  anonymous requests are left and when checks were last made.
