@@ -14,6 +14,7 @@ from pathlib import Path
 from threading import Event, Thread
 from unittest.mock import patch
 
+from appglider import APP_ICON
 from appglider.catalog import APPS
 from appglider.library import Installed, Library, Orphan, check_appimage, desktop_exec
 from appglider.releases import (
@@ -606,6 +607,17 @@ class LibraryTests(unittest.TestCase):
         new.unlink()
         self.library.refresh_launcher_shortcut(development, packaged=False)
         self.assertIn(desktop_exec(development), shortcut.read_text())
+
+    def test_refresh_replaces_a_stale_icon_copy_without_rewriting_the_shortcut(self) -> None:
+        image = Path(self.temp.name) / "glider.AppImage"
+        image.write_bytes(b"image")
+        shortcut = self.library.refresh_launcher_shortcut([str(image)], packaged=True)
+        icon = self.library.data_dir / "icons" / "appglider.png"
+        icon.write_bytes(b"icon from an older release")
+        before = shortcut.read_text()
+        self.library.refresh_launcher_shortcut([str(image)], packaged=True)
+        self.assertEqual(icon.read_bytes(), APP_ICON.read_bytes())
+        self.assertEqual(shortcut.read_text(), before)
 
     def test_refresh_still_refuses_foreign_shortcuts(self) -> None:
         shortcut = self.library.desktop_dir / "appglider.desktop"

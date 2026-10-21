@@ -756,6 +756,7 @@ class Library:
             lines = shortcut.read_text().splitlines()
             current = next((line[5:] for line in lines if line.startswith("Exec=")), "")
             if "X-AppGlider=true" in lines:
+                self._refresh_launcher_icon()
                 if current == desktop_exec(arguments):
                     return shortcut
                 try:
@@ -766,6 +767,16 @@ class Library:
                 if not newer:
                     return shortcut
         return self.create_launcher_shortcut(arguments)
+
+    def _refresh_launcher_icon(self) -> None:
+        """Replace the shortcut's icon copy when a new AppGlider ships a different icon."""
+        icon = self.data_dir / "icons" / "appglider.png"
+        if icon.parent.is_symlink() or icon.is_symlink():
+            return
+        with contextlib.suppress(OSError):
+            data = APP_ICON.read_bytes()
+            if not icon.is_file() or icon.read_bytes() != data:
+                atomic_bytes(icon, data)
 
     def create_launcher_shortcut(self, arguments: list[str]) -> Path:
         command = desktop_exec(arguments)
