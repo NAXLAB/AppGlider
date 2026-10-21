@@ -10,12 +10,9 @@ AppGlider was previously named AppHarbour; it was renamed because that name was 
 in use. Versions up to 0.3.0 were released as AppHarbour, and 0.4.0 starts a fresh library
 and settings under the new name.
 
-![AppGlider in dark mode with built-in apps and added GitHub repositories](docs/previews/appglider-dark.png)
+![AppGlider with the Forest appearance showing six installed apps](docs/previews/appglider-forest.png)
 
-Example library with [UltiMaker Cura](https://github.com/Ultimaker/Cura),
-[LightCraft Classic](https://github.com/emmertex/lightcraft-classic) and
-[Mitcad](https://github.com/mitcad/Mitcad) added from GitHub with their repository icons.
-Versions shown are illustrative.
+Example library using the Forest appearance. Versions shown are illustrative.
 
 ## Features
 
