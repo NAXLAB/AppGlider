@@ -145,7 +145,9 @@ changes until you choose.
 
 ## Icons
 
-AppGlider looks for an icon in the project's repository when you add it. You can pick one
+AppGlider looks for an icon in the project's repository when you add it. This normally takes
+a second or two. If GitHub's request allowance is low it browses the project's web pages
+instead, which uses none of the allowance but can take around twenty seconds. You can pick one
 of the candidates it finds, or **Choose icon…** to use your own PNG or SVG file. To change
 an app's icon later, open **Settings → Applications → Repositories…**, select the app and
 use **Find icons** or **Choose icon…**. Icons are saved on your computer and work offline.

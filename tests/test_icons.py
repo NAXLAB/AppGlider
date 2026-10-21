@@ -1,7 +1,5 @@
 """Repository images are bounded, self-contained and cached without touching app files."""
 
-import base64
-import hashlib
 import json
 import os
 import tempfile
@@ -19,7 +17,13 @@ from PySide6.QtWidgets import QApplication
 
 from appglider import APP_ICON
 from appglider.catalog import custom_app
-from appglider.icons import MAX_ICON_BYTES, discover_icons, icon_pixmap, normalise_icon
+from appglider.icons import (
+    MAX_ICON_BYTES,
+    discover_icons,
+    icon_pixmap,
+    normalise_icon,
+    web_files,
+)
 from appglider.library import Library
 from appglider.releases import Cancelled, RateLimited
 
@@ -89,89 +93,242 @@ class IconTests(unittest.TestCase):
             with self.subTest(data=data[:80]), self.assertRaises(ValueError):
                 normalise_icon(data)
 
-    def metadata(self, files):
-        blobs = {}
-        entries = []
-        for path, data in files.items():
-            sha = hashlib.sha1(data).hexdigest()
-            blobs[sha] = data
-            entries.append(
-                {"path": path, "sha": sha, "mode": "100644", "type": "blob", "size": len(data)}
-            )
+    def repository(self, files):
+        """A fake repository: the API tree, the raw files and the web folder listings."""
+        entries = [
+            {"path": path, "sha": "a" * 40, "mode": "100644", "type": "blob", "size": len(data)}
+            for path, data in files.items()
+        ]
+        tree = json.dumps({"tree": entries, "truncated": False}).encode()
 
-        def read(url):
-            if url.endswith("/git/trees/HEAD?recursive=1"):
-                return json.dumps({"tree": entries, "truncated": False}).encode()
-            data = blobs[url.rsplit("/", 1)[-1]]
-            return json.dumps(
-                {"encoding": "base64", "content": base64.encodebytes(data).decode()}
-            ).encode()
+        def raw(repo, path, limit, cancel):
+            self.assertEqual(repo, "owner/example-app")
+            if path not in files:
+                raise ValueError("GitHub answered HTTP 404.")
+            return files[path]
 
-        return entries, read
+        def listing(repo, path, cancel):
+            self.assertEqual(repo, "owner/example-app")
+            prefix = path + "/" if path else ""
+            names = {}
+            for file in files:
+                if file.startswith(prefix):
+                    head, _, rest = file[len(prefix) :].partition("/")
+                    names[head] = "directory" if rest else "file"
+            return [
+                {"name": name, "path": prefix + name, "contentType": kind}
+                for name, kind in sorted(names.items())
+            ]
 
-    def test_discovery_prefers_desktop_icon_and_skips_symlinks_and_unrelated_images(self):
-        entries, read = self.metadata(
-            {
-                "packaging/application.desktop": b"[Desktop Entry]\nIcon=actual-app\n",
-                "assets/logo.svg": SVG.replace(b"39b3d7", b"112233"),
-                "assets/linux/hicolor/512x512/apps/actual-app.svg": SVG,
-                "assets/screenshot.svg": SVG,
-                "assets/linked-icon.svg": SVG,
-            }
+        return entries, tree, raw, listing
+
+    def discover(self, files, *, quota_low=False, tree=None):
+        entries, api_tree, raw, listing = self.repository(files)
+        metadata = (
+            patch("appglider.icons.read_metadata", return_value=tree or api_tree)
+            if not isinstance(tree, Exception)
+            else patch("appglider.icons.read_metadata", side_effect=tree)
         )
-        entries[-1]["mode"] = "120000"
-        with patch("appglider.icons.read_metadata", side_effect=read) as metadata:
+        with (
+            metadata as api,
+            patch("appglider.icons.releases.raw_bytes", side_effect=raw) as raw_read,
+            patch("appglider.icons.releases.web_listing", side_effect=listing) as web,
+            patch("appglider.icons.github_status.quota_low", return_value=quota_low),
+            patch("appglider.icons.LISTING_PAUSE", 0),
+        ):
             result = discover_icons(CUSTOM, Event())
+        return result, api, raw_read, web
+
+    LAYOUT = {
+        "packaging/application.desktop": b"[Desktop Entry]\nIcon=actual-app\n",
+        "assets/logo.svg": SVG.replace(b"39b3d7", b"112233"),
+        "assets/linux/hicolor/512x512/apps/actual-app.svg": SVG,
+        "assets/screenshot.svg": SVG,
+    }
+
+    def test_with_plenty_of_allowance_one_api_request_lists_files_and_images_come_from_raw(self):
+        files = {**self.LAYOUT, "assets/linked-icon.svg": SVG}
+        entries, tree, _, _ = self.repository(files)
+        entries[-1]["mode"] = "120000"  # a symbolic link is never read
+        tree = json.dumps({"tree": entries, "truncated": False}).encode()
+        result, api, raw_read, web = self.discover(files, tree=tree)
         self.assertEqual(
             [icon.name for icon in result],
             ["assets/linux/hicolor/512x512/apps/actual-app.svg", "assets/logo.svg"],
         )
         self.assertTrue(all(icon.png.startswith(b"\x89PNG") for icon in result))
-        self.assertTrue(
-            all(
-                call.args[0].startswith("https://api.github.com/repos/owner/example-app/")
-                for call in metadata.call_args_list
-            )
-        )
+        api.assert_called_once()
+        self.assertIn("/repos/owner/example-app/git/trees/HEAD", api.call_args.args[0])
+        web.assert_not_called()
+        read = [call.args[1] for call in raw_read.call_args_list]
+        self.assertNotIn("assets/linked-icon.svg", read)
+        self.assertNotIn("assets/screenshot.svg", read)
 
-    def test_bad_candidates_and_incomplete_trees_are_bounded(self):
-        entries, read = self.metadata(
-            {f"assets/icon-{n}.png": b"broken" + bytes([n]) for n in range(20)}
-        )
-        with patch("appglider.icons.read_metadata", side_effect=read) as metadata:
-            self.assertEqual(discover_icons(CUSTOM, Event()), ())
-            self.assertEqual(metadata.call_count, 9)
-        for tree in ({"tree": entries, "truncated": True}, [], {"tree": "bad"}):
-            with patch("appglider.icons.read_metadata", return_value=json.dumps(tree).encode()):
-                with self.assertRaises(ValueError):
-                    discover_icons(CUSTOM, Event())
+    def test_the_web_walk_finds_the_same_icons_without_any_api_request(self):
+        for label, options in (
+            ("low allowance", {"quota_low": True}),
+            ("rate limited", {"tree": RateLimited("api.github.com", 1)}),
+            (
+                "too big for the listing",
+                {"tree": json.dumps({"tree": [], "truncated": True}).encode()},
+            ),
+            ("unusable listing", {"tree": b"[]"}),
+        ):
+            with self.subTest(label):
+                result, api, _, web = self.discover(self.LAYOUT, **options)
+                self.assertEqual(
+                    [icon.name for icon in result],
+                    ["assets/linux/hicolor/512x512/apps/actual-app.svg", "assets/logo.svg"],
+                )
+                self.assertTrue(web.called)
+                if options.get("quota_low"):
+                    api.assert_not_called()
+
+    def test_reverse_dns_icon_names_and_project_names_decide_the_ranking(self):
+        files = {
+            "app.desktop": b"[Desktop Entry]\nIcon=ai.vendor.example-app\n",
+            "assets/icons/zzz-logo.png": SVG,
+            "assets/icons/ai.vendor.example-app.svg": SVG,
+            "assets/icons/example-app-icon.svg": SVG,
+            "assets/icons/aaa-icon.svg": SVG,
+        }
+        result, *_ = self.discover(files)
+        names = [icon.name for icon in result]
+        self.assertEqual(names[0], "assets/icons/ai.vendor.example-app.svg")  # declared name
+        self.assertEqual(names[1], "assets/icons/example-app-icon.svg")  # matches the project
+        plain = {path: data for path, data in files.items() if path != "app.desktop"}
+        plain.pop("assets/icons/ai.vendor.example-app.svg")
+        result, *_ = self.discover(plain)
+        self.assertEqual(result[0].name, "assets/icons/example-app-icon.svg")
+
+    def test_bad_candidates_are_bounded_and_missing_images_are_skipped(self):
+        files = {f"assets/icon-{n}.png": b"broken" + bytes([n]) for n in range(20)}
+        result, api, raw_read, _ = self.discover(files)
+        self.assertEqual(result, ())
+        api.assert_called_once()
+        self.assertEqual(raw_read.call_count, 8)
+        result, *_ = self.discover({"assets/icon.svg": SVG, "assets/icon-b.svg": SVG})
+        self.assertEqual(len(result), 2)
+
+    def test_cancellation_is_honoured_before_any_request_and_during_the_walk(self):
         cancel = Event()
         cancel.set()
-        with patch("appglider.icons.read_metadata") as metadata:
-            with self.assertRaises(Cancelled):
-                discover_icons(CUSTOM, cancel)
-            metadata.assert_not_called()
-        with patch("appglider.icons.read_metadata", side_effect=RateLimited("api.github.com", 1)):
-            with self.assertRaises(RateLimited):
-                discover_icons(CUSTOM, Event())
-
-    def test_rate_limit_during_desktop_or_icon_download_stops_lookup(self):
-        for path, data in (
-            ("app.desktop", b"[Desktop Entry]\nIcon=app\n"),
-            ("assets/icon.svg", SVG),
+        with (
+            patch("appglider.icons.read_metadata") as api,
+            patch("appglider.icons.releases.web_listing") as web,
+            self.assertRaises(Cancelled),
         ):
-            _, read = self.metadata({path: data})
-            tree = read("https://api.github.com/repos/owner/example-app/git/trees/HEAD?recursive=1")
-            with (
-                self.subTest(path=path),
-                patch(
-                    "appglider.icons.read_metadata",
-                    side_effect=[tree, RateLimited("api.github.com", 1)],
-                ) as metadata,
-                self.assertRaises(RateLimited),
-            ):
-                discover_icons(CUSTOM, Event())
-            self.assertEqual(metadata.call_count, 2)
+            discover_icons(CUSTOM, cancel)
+        api.assert_not_called()
+        web.assert_not_called()
+        cancel = Event()
+
+        def listing(repo, path, event):
+            cancel.set()
+            return [{"name": "a", "path": "a", "contentType": "directory"}]
+
+        with (
+            patch("appglider.icons.github_status.quota_low", return_value=True),
+            patch("appglider.icons.releases.web_listing", side_effect=listing),
+            patch("appglider.icons.LISTING_PAUSE", 0),
+            self.assertRaises(Cancelled),
+        ):
+            discover_icons(CUSTOM, cancel)
+
+    def walk(self, listing, **limits):
+        with (
+            patch("appglider.icons.releases.web_listing", side_effect=listing) as web,
+            patch("appglider.icons.LISTING_PAUSE", 0),
+        ):
+            for name, value in limits.items():
+                patcher = patch(f"appglider.icons.{name}", value)
+                patcher.start()
+                self.addCleanup(patcher.stop)
+            files = web_files(CUSTOM, Event())
+        return files, [call.args[1] for call in web.call_args_list]
+
+    def test_the_walk_opens_top_levels_then_only_artwork_like_folders_and_skips_dependencies(self):
+        tree = {
+            "": ["src", "docs", "assets", "3rdParty", "packaging", "README.md"],
+            "src": ["Gui", "Mod", "3rdParty", "main.cpp"],
+            "src/Gui": ["Icons", "Dialogs", "x.cpp"],
+            "src/Gui/Icons": ["app.svg"],
+            "src/Gui/Dialogs": ["dialog.cpp"],
+            "src/Mod": ["Part", "a.py"],
+            "src/Mod/Part": ["part.svg"],
+            "assets": ["icons", "notes.md"],
+            "assets/icons": ["app", "ui"],
+            "assets/icons/app": ["linux/exports/hicolor"],
+            "assets/icons/app/linux/exports/hicolor": ["16x16", "128x128", "512x512", "scalable"],
+            "assets/icons/app/linux/exports/hicolor/512x512": ["apps"],
+            "assets/icons/app/linux/exports/hicolor/512x512/apps": ["app.png"],
+            "assets/icons/app/linux/exports/hicolor/128x128": ["apps"],
+            "assets/icons/app/linux/exports/hicolor/128x128/apps": ["app.png"],
+            "assets/icons/app/linux/exports/hicolor/16x16": ["apps"],
+            "assets/icons/app/linux/exports/hicolor/16x16/apps": ["app.png"],
+            "assets/icons/app/linux/exports/hicolor/scalable": ["apps"],
+            "assets/icons/app/linux/exports/hicolor/scalable/apps": ["app.svg"],
+            "packaging": ["linux"],
+            "packaging/linux": ["app.desktop"],
+        }
+
+        def listing(repo, path, cancel):
+            return [
+                {
+                    "name": name.rsplit("/", 1)[-1],
+                    "path": (path + "/" if path else "") + name,
+                    "contentType": "directory"
+                    if (path + "/" if path else "") + name in tree
+                    else "file",
+                }
+                for name in tree.get(path, [])
+            ]
+
+        files, opened = self.walk(listing)
+        self.assertNotIn("3rdParty", opened)
+        self.assertNotIn("docs", opened)
+        self.assertNotIn("src/3rdParty", opened)
+        self.assertIn("src/Gui", opened)  # second-level folders are all looked at
+        self.assertIn("src/Gui/Icons", opened)  # then the artwork-like one inside
+        self.assertNotIn("src/Gui/Dialogs", opened)  # but not the others
+        self.assertNotIn("src/Mod/Part", opened)
+        hicolor = "assets/icons/app/linux/exports/hicolor"
+        self.assertIn(f"{hicolor}/512x512/apps", opened)
+        self.assertIn(f"{hicolor}/128x128/apps", opened)
+        self.assertNotIn(f"{hicolor}/16x16", opened)  # only the largest sizes
+        self.assertIn("src/Gui/Icons/app.svg", files)
+        self.assertTrue(all(size is None for size in files.values()))
+        self.assertEqual(opened[0], "")
+
+    def test_the_walk_is_capped_in_pages_and_time_and_survives_page_failures(self):
+        def endless(repo, path, cancel):
+            return [
+                {"name": f"d{i}", "path": f"{path}/d{i}".lstrip("/"), "contentType": "directory"}
+                for i in range(3)
+            ]
+
+        _, opened = self.walk(endless, MAX_LISTINGS=7)
+        self.assertEqual(len(opened), 7)
+        with patch("appglider.icons.time.monotonic", side_effect=[0, 0, 100, 100]):
+            _, opened = self.walk(endless)
+        self.assertEqual(len(opened), 1)  # the time budget ended it
+
+        def first_fails(repo, path, cancel):
+            raise ValueError("HTTP 500")
+
+        files, opened = self.walk(first_fails)
+        self.assertEqual((files, opened), ({}, [""]))
+
+        def later_fails(repo, path, cancel):
+            if path:
+                raise ValueError("HTTP 500")
+            return [
+                {"name": "assets", "path": "assets", "contentType": "directory"},
+                {"name": "logo.svg", "path": "logo.svg", "contentType": "file"},
+            ]
+
+        files, opened = self.walk(later_fails)
+        self.assertEqual(list(files), ["logo.svg"])  # what was learnt before the failure stays
 
     def test_saved_icon_survives_restart_and_failed_replacement(self):
         self.library.add_repository(CUSTOM)

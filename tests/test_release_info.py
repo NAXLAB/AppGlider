@@ -407,6 +407,112 @@ class FeedTests(unittest.TestCase):
             self.assertIsNone(releases.feed_request("o/r", ""))
 
 
+class WebFetchTests(unittest.TestCase):
+    def opener(self, *, error=None, body=b"", headers=None):
+        class Reply(io.BytesIO):
+            def __enter__(self):
+                return self
+
+        class Opener:
+            def open(self, request, timeout):
+                self.request, self.timeout = request, timeout
+                if error is not None:
+                    raise error
+                return Reply(body)
+
+        opener = Opener()
+        return opener, patch.object(releases, "build_opener", return_value=opener)
+
+    def http(self, code):
+        return HTTPError("u", code, "x", Message(), io.BytesIO())
+
+    def test_raw_files_come_from_the_raw_host_with_a_quoted_path_and_a_size_limit(self):
+        opener, patched = self.opener(body=b"PNGDATA")
+        with patched:
+            data = releases.raw_bytes("owner/repo", "assets/my icon#1.png", 100, Event())
+        self.assertEqual(data, b"PNGDATA")
+        self.assertEqual(
+            opener.request.full_url,
+            "https://raw.githubusercontent.com/owner/repo/HEAD/assets/my%20icon%231.png",
+        )
+        self.assertTrue(opener.request.get_header("User-agent").startswith("AppGlider/"))
+        self.assertEqual(opener.timeout, 20)
+        with self.opener(body=b"x" * 101)[1], self.assertRaisesRegex(ValueError, "larger"):
+            releases.raw_bytes("owner/repo", "a.png", 100, Event())
+
+    def test_failures_become_plain_errors_and_never_rate_limit_the_api(self):
+        for error, message in (
+            (self.http(404), "HTTP 404"),
+            (self.http(429), "HTTP 429"),
+            (self.http(500), "HTTP 500"),
+            (URLError("offline"), "Could not reach GitHub"),
+            (TimeoutError(), "Could not reach GitHub"),
+        ):
+            with self.subTest(error=error), self.opener(error=error)[1]:
+                with self.assertRaisesRegex(ValueError, message):
+                    releases.raw_bytes("owner/repo", "a.png", 100, Event())
+        self.assertEqual(releases._RETRY_AFTER.get("raw.githubusercontent.com", 0), 0)
+
+    def test_fetches_honour_cancellation_and_trusted_hosts(self):
+        cancel = Event()
+        cancel.set()
+        with (
+            patch.object(releases, "build_opener") as build,
+            self.assertRaises(releases.Cancelled),
+        ):
+            releases.raw_bytes("owner/repo", "a.png", 100, cancel)
+        with self.assertRaises(releases.Cancelled):
+            releases.web_listing("owner/repo", "", cancel)
+        build.assert_not_called()
+        self.assertTrue(releases.valid_url("https://raw.githubusercontent.com/o/r/HEAD/a.png"))
+        for url in (
+            "https://raw.githubusercontent.com.evil.test/o/r/HEAD/a.png",
+            "http://raw.githubusercontent.com/o/r/HEAD/a.png",
+            "https://user@raw.githubusercontent.com/o/r/HEAD/a.png",
+        ):
+            self.assertFalse(releases.valid_url(url))
+
+    def page(self, items):
+        payload = {"payload": {"codeViewTreeRoute": {"tree": {"items": items}}}}
+        return json.dumps(payload).encode()
+
+    def test_a_folder_listing_is_read_from_the_web_page_as_json(self):
+        good = {"name": "icon.png", "path": "assets/icon.png", "contentType": "file"}
+        folder = {"name": "icons", "path": "assets/icons", "contentType": "directory"}
+        junk = [
+            {"name": "x", "path": "../escape", "contentType": "file"},
+            {"name": "x", "path": "a//b", "contentType": "file"},
+            {"name": "x", "path": "a\nb", "contentType": "file"},
+            {"name": "x", "path": "a/b", "contentType": "symlink"},
+            {"name": 5, "path": "a/b", "contentType": "file"},
+            {"name": "x", "path": "y" * 600, "contentType": "file"},
+            "text",
+        ]
+        opener, patched = self.opener(body=self.page([good, folder, *junk]))
+        with patched:
+            items = releases.web_listing("owner/repo", "assets", Event())
+        self.assertEqual(items, [good, folder])
+        self.assertEqual(opener.request.full_url, "https://github.com/owner/repo/tree/HEAD/assets")
+        self.assertEqual(opener.request.get_header("Accept"), "application/json")
+        opener, patched = self.opener(body=self.page([good]))
+        with patched:
+            releases.web_listing("owner/repo", "", Event())
+        self.assertEqual(opener.request.full_url, "https://github.com/owner/repo/tree/HEAD")
+
+    def test_a_listing_in_an_unexpected_form_is_an_error_not_a_guess(self):
+        for body in (b"not json", b"[]", b'{"payload": {}}', b'{"payload": 5}', b"null"):
+            with self.subTest(body=body), self.opener(body=body)[1]:
+                with self.assertRaisesRegex(ValueError, "expected form"):
+                    releases.web_listing("owner/repo", "", Event())
+        with self.opener(body=self.page("not a list"))[1]:
+            self.assertEqual(releases.web_listing("owner/repo", "", Event()), [])
+        with self.opener(body=b"x" * (releases.MAX_LISTING + 1))[1]:
+            with self.assertRaises(ValueError):
+                releases.web_listing("owner/repo", "", Event())
+        with self.opener(error=self.http(301))[1], self.assertRaisesRegex(ValueError, "HTTP 301"):
+            releases.web_listing("owner/repo", "", Event())  # redirects are never followed
+
+
 class LatestTagTests(unittest.TestCase):
     def tag(self, location, repo="owner/repo"):
         with patch.object(releases, "redirect_location", return_value=location):

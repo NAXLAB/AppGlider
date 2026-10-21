@@ -154,8 +154,24 @@ GitHub changes that page or no checksum can be found, AppGlider stops and explai
 - Only a bounded set of likely repository files is examined, so some projects need a manual
   choice. A missing icon or a quota error never stops a valid repository from being added.
   Icons inside the AppImage itself are not extracted.
-- Searching for icons costs at least two GitHub requests per app, so AppGlider does it only
-  when you ask, never for many apps at once.
+- Icon searches run only when you ask, never in the background and never for many apps at
+  once. The images themselves are always read from `raw.githubusercontent.com`, which does
+  not use the API allowance. To find *which* files to read, AppGlider uses one of two ways:
+  with plenty of allowance left (30 or more requests) it asks the API for the repository's
+  file list, which is **one API request** and takes about a second. When the allowance is low
+  or unknown, the API is rate limited, or the repository is too big for that listing, it
+  **browses the repository's web pages** instead (`github.com/<owner>/<repo>/tree/HEAD/<folder>`,
+  which returns a folder's contents as JSON), using **no API requests**.
+- The web walk opens every top-level and second-level folder, then deeper folders only when
+  their path looks like artwork (whole words such as `icons`, `brand`, `assets`, `hicolor`,
+  `packaging`), most promising first. It skips dependency, test, documentation and
+  platform-specific folders, looks at only the two largest sizes inside `hicolor`-style
+  folders, and stops after 40 pages or 60 seconds. Expect about 15 to 25 seconds.
+  GitHub's folder JSON is an undocumented part of its website, so if it ever changes the walk
+  simply finds nothing and you can still choose an image yourself.
+- Candidates are ranked: the icon named in the project's `.desktop` file first (including
+  names like `com.example.app`), then files named after the project, then PNGs under
+  `linux` or `hicolor`, larger sizes before smaller. Up to four are offered.
 - The apps in the ArtCraft example catalog use icons bundled with AppGlider.
 
 ## Catalog files

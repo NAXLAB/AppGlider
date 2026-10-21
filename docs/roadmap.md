@@ -21,6 +21,10 @@ change after discussion. Something being listed here is not a promise that it wi
 
 ## Done
 
+- **Icon search without the API allowance:** finding an icon now costs one request (down
+  from about six), and none at all when the allowance is low, by browsing the repository's
+  web pages. Results are also ranked better (names like `com.example.app`, and files named
+  after the project).
 - **Update notifications:** an optional desktop message when a scheduled check finds a new
   update, once per new version. It is off unless you turn it on in Settings.
 - **Sorting and pinning:** a **Sort** box (name, installed first, updates first, order added)

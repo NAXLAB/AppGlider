@@ -1,9 +1,9 @@
 """Discover bounded repository artwork and turn it into a local PNG icon."""
 
-import base64
 import configparser
 import json
 import re
+import time
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -12,7 +12,7 @@ from threading import Event
 from PySide6.QtCore import QBuffer, QByteArray, QIODevice, QSize, Qt
 from PySide6.QtGui import QImage, QImageReader, QPixmap
 
-from appglider import APP_ICON
+from appglider import APP_ICON, github_status, releases
 from appglider.catalog import App
 from appglider.releases import RateLimited, check_cancel, read_metadata
 
@@ -105,67 +105,165 @@ def normalise_icon(data: bytes) -> bytes:
     return bytes(output.data().data())
 
 
-def discover_icons(app: App, cancel: Event) -> tuple[IconCandidate, ...]:
+MAX_LISTINGS = 40
+WALK_SECONDS = 60
+LISTING_PAUSE = 0.1
+
+# Folder words, matched as whole words, that suggest artwork; and ones that never do.
+ICON_WORDS = {
+    "icon",
+    "icons",
+    "logo",
+    "logos",
+    "brand",
+    "branding",
+    "hicolor",
+    "exports",
+    "pixmaps",
+}
+FOLDER_WORDS = ICON_WORDS | {
+    "asset", "assets", "resource", "resources", "res", "image", "images", "img", "linux",
+    "packaging", "share", "apps", "app", "desktop", "appimage", "static", "public", "art",
+    "media", "build", "scalable", "artwork", "data",
+}  # fmt: skip
+SKIPPED_WORDS = {
+    "3rdparty", "thirdparty", "third", "party", "external", "extern", "deps", "dependencies",
+    "vendor", "vendors", "node", "modules", "test", "tests", "testing", "docs", "doc", "macos",
+    "darwin", "mac", "windows", "win", "win32", "android", "ios", "git", "fonts", "locale",
+    "locales", "translations", "i18n", "example", "examples", "sample", "samples", "flatpak",
+    "snap", "cmake", "contrib", "tools", "scripts", "script", "website", "web",
+}  # fmt: skip
+SIZE_FOLDER = re.compile(r"(\d+)x\d+")
+
+
+def words(path: str) -> list[str]:
+    return re.findall(r"[a-z0-9]+", re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", path).lower())
+
+
+def folder_priority(path: str) -> int:
+    found = words(path)
+    return 2 * sum(w in ICON_WORDS for w in found) + sum(
+        w in FOLDER_WORDS or w.isdigit() for w in found
+    )
+
+
+def worth_opening(path: str, depth: int) -> bool:
+    found = words(path)
+    if any(w in SKIPPED_WORDS for w in found):
+        return False
+    return depth <= 1 or any(w in FOLDER_WORDS for w in found)
+
+
+def api_files(app: App, cancel: Event) -> dict[str, int | None] | None:
+    """Every small regular file of the repository from one API request, or None if unusable."""
     check_cancel(cancel)
-    prefix = f"https://api.github.com/repos/{app.repo}"
-    tree = json.loads(read_metadata(prefix + "/git/trees/HEAD?recursive=1"))
+    try:
+        tree = json.loads(
+            read_metadata(f"https://api.github.com/repos/{app.repo}/git/trees/HEAD?recursive=1")
+        )
+    except RateLimited:
+        return None
     if (
         not isinstance(tree, dict)
         or tree.get("truncated")
         or not isinstance(tree.get("tree"), list)
     ):
-        raise ValueError("Could not inspect the repository's icon files. Choose an image instead.")
-    files: dict[str, str] = {}
+        return None
+    files: dict[str, int | None] = {}
     for item in tree["tree"]:
         if not isinstance(item, dict):
             continue
-        path, sha, size = item.get("path"), item.get("sha"), item.get("size")
+        path, size = item.get("path"), item.get("size")
         if (
             isinstance(path, str)
             and len(path) <= 512
             and not any(ord(c) < 32 or ord(c) == 127 for c in path)
             and not any(part in {"", ".", ".."} for part in path.split("/"))
-            and isinstance(sha, str)
-            and re.fullmatch(r"[a-f0-9]{40,64}", sha)
             and type(size) is int
             and 0 < size <= MAX_ICON_BYTES
             and item.get("type") == "blob"
             and item.get("mode") in {"100644", "100755"}
         ):
-            files[path] = sha
+            files[path] = size
+    return files
 
-    def read_blob(path: str) -> bytes:
+
+def web_files(app: App, cancel: Event) -> dict[str, int | None]:
+    """Find files by browsing the repository's web folders, without any API request.
+
+    Every top-level and second-level folder is opened; deeper ones only when their path
+    looks like artwork, most promising first. The walk is capped in pages and in time.
+    """
+    files: dict[str, int | None] = {}
+    queue: list[tuple[str, int]] = [("", 0)]
+    started, opened = time.monotonic(), 0
+    while queue and opened < MAX_LISTINGS and time.monotonic() - started < WALK_SECONDS:
         check_cancel(cancel)
-        blob = json.loads(read_metadata(prefix + "/git/blobs/" + files[path]))
-        if not isinstance(blob, dict) or blob.get("encoding") != "base64":
-            raise ValueError("GitHub did not return a readable icon file.")
-        content = blob.get("content")
-        if not isinstance(content, str):
-            raise ValueError("GitHub returned invalid icon content.")
-        data = base64.b64decode("".join(content.split()), validate=True)
-        if len(data) > MAX_ICON_BYTES:
-            raise ValueError("The repository icon is too large.")
-        check_cancel(cancel)
-        return data
+        queue.sort(key=lambda entry: (-folder_priority(entry[0]), entry[1]))
+        path, depth = queue.pop(0)
+        try:
+            items = releases.web_listing(app.repo, path, cancel)
+        except ValueError:
+            if opened == 0:
+                return files  # the very first page failed: nothing to learn here
+            continue
+        opened += 1
+        sizes = [
+            (int(match.group(1)), item["name"])
+            for item in items
+            if item["contentType"] == "directory" and (match := SIZE_FOLDER.fullmatch(item["name"]))
+        ]
+        biggest = {name for _, name in sorted(sizes)[-2:]}  # hicolor-style: the largest only
+        for item in items:
+            if item["contentType"] == "file":
+                files[item["path"]] = None
+            elif (
+                depth < 8
+                and worth_opening(item["path"], depth)
+                and (not SIZE_FOLDER.fullmatch(item["name"]) or item["name"] in biggest)
+            ):
+                queue.append((item["path"], depth + 1))
+        cancel.wait(LISTING_PAUSE)
+    return files
+
+
+def discover_icons(app: App, cancel: Event) -> tuple[IconCandidate, ...]:
+    """Offer up to four icon candidates found in the repository.
+
+    With plenty of GitHub API allowance left, one API request lists the files. Otherwise (low
+    allowance, rate limited, or a repository too big for that listing) the files are found by
+    browsing the repository's web pages. Either way the images themselves are read from
+    raw.githubusercontent.com, which costs no API requests.
+    """
+    check_cancel(cancel)
+    files = None if github_status.quota_low() else api_files(app, cancel)
+    if files is None:
+        files = web_files(app, cancel)
+
+    def read_file(path: str) -> bytes:
+        return releases.raw_bytes(app.repo, path, MAX_ICON_BYTES, cancel)
 
     declared: set[str] = set()
-    desktops = sorted(path for path in files if path.endswith(".desktop"))
-    for path in desktops[:2]:
+    for path in sorted(path for path in files if path.endswith(".desktop"))[:2]:
         try:
             config = configparser.ConfigParser(interpolation=None, strict=False)
-            config.read_string(read_blob(path).decode("utf-8"))
-            declared.add(PurePosixPath(config.get("Desktop Entry", "Icon")).stem.lower())
-        except RateLimited:
-            raise
+            config.read_string(read_file(path).decode("utf-8"))
+            name = config.get("Desktop Entry", "Icon").strip().lower()
+            if name.endswith((".png", ".svg", ".xpm", ".ico")):
+                name = name.rsplit(".", 1)[0]
+            declared.add(name)
         except (OSError, ValueError, configparser.Error):
             continue
 
-    def rank(path: str) -> tuple[int, int, int, int, str]:
+    slug = re.sub(r"[^a-z0-9]", "", app.repo.split("/")[1].lower())
+
+    def rank(path: str) -> tuple[int, int, int, int, int, str]:
         lower = path.lower()
         stem = PurePosixPath(lower).stem
         resolution = max((int(n) for n in re.findall(r"(?:^|/)(\d+)x\d+(?:/|$)", lower)), default=0)
         return (
             int(stem not in declared),
+            int(slug not in re.sub(r"[^a-z0-9]", "", stem)),
             int("linux" not in lower and "hicolor" not in lower),
             int(PurePosixPath(lower).suffix != ".png"),
             -min(resolution, 512),
@@ -205,9 +303,7 @@ def discover_icons(app: App, cancel: Event) -> tuple[IconCandidate, ...]:
             break
         seen.add(stem)
         try:
-            png = normalise_icon(read_blob(path))
-        except RateLimited:
-            raise
+            png = normalise_icon(read_file(path))
         except (OSError, ValueError):
             continue
         result.append(IconCandidate(path, png))
