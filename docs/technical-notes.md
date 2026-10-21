@@ -163,6 +163,9 @@ repository:
   than 100 apps imports nothing. The library holds at most 100 repositories in total.
 - Import never changes an app you already have, makes no network requests and installs
   nothing. Names and descriptions are shown as plain text, never as formatted text.
+- The example catalog is also bundled in the package (`assets/catalogs/artcraft.toml`) and a
+  test keeps it identical to `docs/catalogs/artcraft.toml`; the release workflow attaches
+  that file to every release.
 - The 14 apps in the example catalog keep the identifiers they always had (for example
   `photocraft`), which is how apps installed before the catalog existed match again when it
   is imported.

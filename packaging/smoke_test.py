@@ -56,6 +56,7 @@ def main() -> None:
         assert report["https_certificates"] > 0, report
         assert report["installed"] == 0 and report["catalog"] == 0, report
         assert report["welcome"] is True, report
+        assert report["example_catalog"] == 14, report
         assert report["release_preferences"] == 0 and report["card_dropdowns"] == 0, report
         assert report["python"].startswith("3.13."), report
         assert Path(report["prefix"]).is_relative_to(report["appdir"]), report

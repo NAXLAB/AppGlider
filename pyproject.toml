@@ -22,7 +22,7 @@ appglider = "appglider.app:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-appglider = ["assets/icons/*.png", "assets/licenses/*.txt"]
+appglider = ["assets/icons/*.png", "assets/licenses/*.txt", "assets/catalogs/*.toml"]
 
 [tool.setuptools.data-files]
 "share/doc/appglider" = ["ATTRIBUTION.md", "THIRD_PARTY_NOTICES.md"]

@@ -11,6 +11,8 @@ from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication, QComboBox
 
 from appglider import APP_ICON, APP_NAME, APP_VERSION
+from appglider.catalogfile import EXAMPLE_CATALOG
+from appglider.catalogfile import read as read_catalog
 from appglider.instance import SingleInstance
 from appglider.window import LauncherWindow
 
@@ -68,6 +70,7 @@ def main() -> int:
                         "installed": len(window.installed),
                         "catalog": len(window.apps),
                         "welcome": window.welcome.isVisible(),
+                        "example_catalog": len(read_catalog(EXAMPLE_CATALOG).entries),
                         "icon": not window.windowIcon().isNull(),
                         "update_icon": not window.tray_icons[1].pixmap(32, 32).isNull(),
                         "update_checks_hours": window.update_timer.interval() // 3_600_000,

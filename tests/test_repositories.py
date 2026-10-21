@@ -339,6 +339,31 @@ class RepositoryGuiTests(unittest.TestCase):
         self.assertEqual(label.textFormat(), Qt.TextFormat.PlainText)
         self.assertEqual(card.findChild(type(card.action_button), "appName").text(), "<b>Bold</b>")
 
+    def test_the_example_catalog_button_previews_then_adds_the_example_apps(self):
+        empty = self.root / "empty"
+        library = Library(empty / "data", empty / "apps", empty / "desktop")
+        dialog = RepositoriesDialog(library, self.window)
+        self.addCleanup(dialog.close)
+        self.assertTrue(dialog.example_button.isEnabled())
+        previews = []
+
+        def exec_preview(preview, accept=True):
+            previews.append(preview)
+            return 1 if accept else 0
+
+        with patch.object(CatalogPreviewDialog, "exec", exec_preview):
+            dialog.import_example_catalog()
+        self.assertEqual(len(library.apps), 14)
+        (preview,) = previews
+        self.assertIn("ArtCraft apps and SolidCraft", preview.findChild(QLabel).text())
+        self.assertIn("Added 14 apps from artcraft.toml", dialog.status.text())
+        with patch.object(CatalogPreviewDialog, "exec", exec_preview):
+            dialog.import_example_catalog()  # everything is already there
+        self.assertEqual(len(previews), 2)
+        self.assertFalse(previews[1].add_button.isEnabled())
+        dialog.start_add_repository()
+        self.assertFalse(dialog.example_button.isEnabled())
+
     def test_import_and_export_are_disabled_while_adding_or_busy(self):
         self.assertTrue(self.dialog.import_button.isEnabled())
         self.dialog.start_add_repository()

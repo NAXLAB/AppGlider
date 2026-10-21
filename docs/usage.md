@@ -23,8 +23,8 @@ newer version is out. If you want the "how does it actually work" details, see t
 
 ## The window
 
-A new library is empty. You will see a welcome message with **+ Add app** and **Import
-catalog…**.
+A new library is empty. You will see a welcome message with **+ Add app**, **Import
+catalog…** and **Example catalog**.
 
 Once you have apps, the tabs along the top filter them:
 
@@ -144,8 +144,10 @@ A catalog is a plain text file that lists apps. Open **Settings → Applications
 Repositories…**, then use **Import catalog…** to add everyone on a list at once, or
 **Export catalog…** to save your own list, perhaps to back it up or share it.
 
-A ready-made example is [`catalogs/artcraft.toml`](catalogs/artcraft.toml), listing the
-ArtCraft apps and SolidCraft. Download it and import it.
+A ready-made example list of the ArtCraft apps and SolidCraft is built in: choose **Example
+catalog** on the welcome screen, or **Example catalog…** in **Settings → Applications →
+Repositories…**. The same file is [`catalogs/artcraft.toml`](catalogs/artcraft.toml), also
+attached to each release, if you want to read it or use it as a model for your own.
 
 - **You see a preview first.** Importing only adds apps to your library as cards. Nothing
   is installed or downloaded until you press **Install**.

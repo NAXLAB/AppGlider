@@ -57,8 +57,9 @@ AppGlider starts empty. Add apps in either of two ways:
 - **+ Add app**: paste a GitHub repository address, choose **Inspect repository**, then
   **Add to library**.
 - **Import catalog…** (under **Settings → Applications → Repositories…**): add a whole
-  list at once. [`docs/catalogs/artcraft.toml`](docs/catalogs/artcraft.toml) is an
-  example listing the ArtCraft apps and SolidCraft.
+  list at once from a plain-text file. **Example catalog** adds a ready-made list of the
+  ArtCraft apps and SolidCraft that is built into AppGlider
+  ([`docs/catalogs/artcraft.toml`](docs/catalogs/artcraft.toml)).
 
 Adding an app only puts a card in your library. Press **Install** on the card to download
 it. The project needs a published release with an AppImage and a checksum.

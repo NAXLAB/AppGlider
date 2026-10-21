@@ -30,7 +30,7 @@ from PySide6.QtWidgets import (
 
 from appglider import APP_ICON
 from appglider.catalog import App, custom_app
-from appglider.catalogfile import CatalogError, ParsedCatalog, read, render
+from appglider.catalogfile import EXAMPLE_CATALOG, CatalogError, ParsedCatalog, read, render
 from appglider.icons import (
     MAX_ICON_BYTES,
     IconCandidate,
@@ -324,6 +324,12 @@ class RepositoriesDialog(QDialog):
         self.import_button.setToolTip("Add apps from a plain-text TOML catalog file.")
         self.import_button.clicked.connect(self.import_catalog)
         footer.addWidget(self.import_button)
+        self.example_button = QPushButton("Example catalog…")
+        self.example_button.setToolTip(
+            "Add the ArtCraft apps and SolidCraft, a ready-made example list."
+        )
+        self.example_button.clicked.connect(self.import_example_catalog)
+        footer.addWidget(self.example_button)
         self.export_button = QPushButton("Export catalog…")
         self.export_button.setToolTip("Save your repositories as a plain-text TOML file.")
         self.export_button.clicked.connect(self.export_catalog)
@@ -560,6 +566,7 @@ class RepositoriesDialog(QDialog):
         self.inspect_button.setText("Inspecting…" if busy else "Inspect repository")
         self.new_repository_button.setEnabled(not busy and not self.adding)
         self.import_button.setEnabled(not busy and not self.adding)
+        self.example_button.setEnabled(not busy and not self.adding)
         self.export_button.setEnabled(not busy)
         self.add_button.setVisible(self.adding)
         self.add_button.setEnabled(not busy and self.release is not None)
@@ -730,13 +737,19 @@ class RepositoriesDialog(QDialog):
         path, _ = QFileDialog.getOpenFileName(
             self, "Import catalog", "", "AppGlider catalogs (*.toml);;All files (*)"
         )
-        if not path:
-            return
+        if path:
+            self.import_from(Path(path))
+
+    def import_example_catalog(self) -> None:
+        if self.task is None and not self.adding:
+            self.import_from(EXAMPLE_CATALOG)
+
+    def import_from(self, source: Path) -> None:
         try:
-            catalog = read(Path(path))
+            catalog = read(source)
             plan = self.library.plan_import(catalog.entries)
         except (CatalogError, OSError, ValueError) as error:
-            self.status.setText(f"Cannot import {Path(path).name}: {error}")
+            self.status.setText(f"Cannot import {source.name}: {error}")
             return
         preview = CatalogPreviewDialog(catalog, plan, self)
         accepted = preview.exec() == QDialog.DialogCode.Accepted
@@ -752,7 +765,7 @@ class RepositoriesDialog(QDialog):
         self.catalog_changed.emit()
         count = len(added.new)
         self.status.setText(
-            f"Added {count} {'app' if count == 1 else 'apps'} from {Path(path).name}. "
+            f"Added {count} {'app' if count == 1 else 'apps'} from {source.name}. "
             "Select one and choose Find icons to add its icon."
         )
 

@@ -24,12 +24,11 @@ change after discussion. Something being listed here is not a promise that it wi
   remove it or its installed files.
 - **Desktop notification for updates:** a pop-up message when a new update appears. The
   tray badge and tooltip already show waiting updates; a notification would be optional.
-- **Offline starter catalog:** a copy of the example catalog built into AppGlider, with an
-  **Import starter catalog** button, so a first run does not need the file downloaded. Today
-  the example is in the repository ([`catalogs/artcraft.toml`](catalogs/artcraft.toml)).
 
 ## Done
 
+- **Example catalog built in:** an **Example catalog** button on the welcome screen and in the
+  Repositories window adds the ArtCraft apps and SolidCraft without downloading anything.
 - **Cheaper update checks:** checking an app that has not changed now asks GitHub's ordinary
   release page first and uses none of the free request allowance. The update schedule can
   now run as often as every hour.

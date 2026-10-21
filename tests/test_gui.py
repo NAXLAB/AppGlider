@@ -105,6 +105,11 @@ class LibraryTests(unittest.TestCase):
         importer.assert_called_once()
         self.assertEqual(opened, [False])
 
+        with patch.object(RepositoriesDialog, "import_example_catalog", autospec=True) as example:
+            QTimer.singleShot(50, lambda: close_dialog([]))
+            window.welcome_example_button.click()
+        example.assert_called_once()
+
         library.import_catalog(STARTER_ENTRIES[:2])
         window.scan_installed()
         self.qt.processEvents()

@@ -10,7 +10,7 @@ from catalog_fixture import APPS, STARTER_ENTRIES, stock
 from test_library import APP, appimage_bytes, ignore_progress, release_for
 
 from appglider.catalog import custom_app
-from appglider.catalogfile import CatalogEntry, parse, render
+from appglider.catalogfile import EXAMPLE_CATALOG, CatalogEntry, parse, read, render
 from appglider.library import Library
 
 
@@ -105,6 +105,17 @@ class CatalogImportTests(unittest.TestCase):
         fresh.import_catalog(STARTER_ENTRIES)
         self.assertEqual(fresh.orphans(), [])
         self.assertEqual(fresh.scan()[APP.id].version, "1.0.0")
+
+    def test_the_bundled_example_catalog_matches_the_published_one_and_imports_cleanly(
+        self,
+    ) -> None:
+        published = Path(__file__).parents[1] / "docs" / "catalogs" / "artcraft.toml"
+        self.assertEqual(EXAMPLE_CATALOG.read_bytes(), published.read_bytes())
+        catalog = read(EXAMPLE_CATALOG)
+        self.assertEqual((catalog.skipped, catalog.ignored), ((), ()))
+        plan = self.library.import_catalog(catalog.entries)
+        self.assertEqual(len(plan.new), 14)
+        self.assertEqual({app.id for app in self.library.apps}, {app.id for app in APPS})
 
     def test_invalid_entry_is_refused_before_anything_is_written(self) -> None:
         with self.assertRaises(ValueError):

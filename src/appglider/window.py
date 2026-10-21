@@ -881,8 +881,9 @@ class LauncherWindow(QMainWindow):
         welcome_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         welcome_layout.addWidget(welcome_title)
         welcome_text = QLabel(
-            "Your library is empty. Add an app from a public GitHub repository, or import a "
-            "catalog: a plain-text list of repositories you can read before adding it."
+            "Your library is empty. Add an app from a public GitHub repository, import a "
+            "catalog (a plain-text list of repositories you can read before adding it), or "
+            "start from the ready-made example list of ArtCraft apps and SolidCraft."
         )
         welcome_text.setObjectName("emptyState")
         welcome_text.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -899,6 +900,14 @@ class LauncherWindow(QMainWindow):
             lambda: self.open_repositories(import_catalog=True)
         )
         welcome_buttons.addWidget(self.welcome_import_button)
+        self.welcome_example_button = QPushButton("Example catalog")
+        self.welcome_example_button.setToolTip(
+            "Add the ArtCraft apps and SolidCraft, a ready-made example list."
+        )
+        self.welcome_example_button.clicked.connect(
+            lambda: self.open_repositories(import_example=True)
+        )
+        welcome_buttons.addWidget(self.welcome_example_button)
         welcome_buttons.addStretch()
         welcome_layout.addLayout(welcome_buttons)
         welcome_layout.addStretch()
@@ -1093,6 +1102,7 @@ class LauncherWindow(QMainWindow):
         self.welcome.setVisible(not self.apps)
         self.welcome_add_button.setEnabled(self.task is None)
         self.welcome_import_button.setEnabled(self.task is None)
+        self.welcome_example_button.setEnabled(self.task is None)
         self.results.setText(
             "No apps yet"
             if not self.apps
@@ -1191,6 +1201,7 @@ class LauncherWindow(QMainWindow):
         *,
         choose_build: bool = False,
         import_catalog: bool = False,
+        import_example: bool = False,
     ) -> None:
         if self.task is not None:
             return
@@ -1211,6 +1222,8 @@ class LauncherWindow(QMainWindow):
                 dialog.choose_build()
         if import_catalog:
             QTimer.singleShot(0, dialog.import_catalog)
+        elif import_example:
+            QTimer.singleShot(0, dialog.import_example_catalog)
         dialog.exec()
 
     def has_update(self, app_id: str) -> bool:
