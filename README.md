@@ -24,6 +24,7 @@ when a new version is out.
 - Lets you choose stable releases only, or try previews, for each app.
 - Adds a menu entry for each app it installs and can sit in your system tray.
 - Sorts your apps and lets you pin favourites to the top.
+- Can show a desktop notification when new updates are found (off unless you turn it on).
 - Shares lists of apps as plain text files you can read, edit and import
   (see [catalogs](docs/usage.md#catalogs-sharing-a-list-of-apps)).
 - Follows your desktop's colours, or pick Light, Dark or one of three coloured themes.

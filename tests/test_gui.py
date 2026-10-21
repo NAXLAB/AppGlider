@@ -6,6 +6,7 @@ import os
 import tempfile
 import time
 import unittest
+from contextlib import ExitStack
 from dataclasses import asdict, replace
 from pathlib import Path
 from threading import Event
@@ -47,6 +48,7 @@ from appglider.window import (
     LauncherWindow,
     OrphansDialog,
     SettingsDialog,
+    notified_versions,
     pinned_apps,
     sort_mode,
 )
@@ -354,6 +356,138 @@ class LibraryTests(unittest.TestCase):
                 self.assertEqual(pinned_apps(self.settings), set())
         self.settings.setValue("library/pinned", json.dumps(["a", "b", "a"]))
         self.assertEqual(pinned_apps(self.settings), {"a", "b"})
+
+    def waiting_update(self, version: str = "1.1.0") -> None:
+        window = self.window
+        if APP.id not in window.installed:
+            payload = appimage_bytes()
+            with patch("appglider.releases.request", return_value=io.BytesIO(payload)):
+                window.library.install(
+                    APP, release_for("1.0.0", payload), Event(), lambda *args: None
+                )
+        window.releases[APP.id] = release_for(version, appimage_bytes())
+        window.scan_installed()
+
+    def notifier(self):
+        """Patch the desktop so a tray exists and the window is in the background."""
+        stack = ExitStack()
+        self.addCleanup(stack.close)
+        stack.enter_context(
+            patch("appglider.window.QSystemTrayIcon.isSystemTrayAvailable", return_value=True)
+        )
+        stack.enter_context(patch.object(self.window.tray, "isVisible", return_value=True))
+        stack.enter_context(patch.object(self.window, "isActiveWindow", return_value=False))
+        return stack.enter_context(patch.object(self.window.tray, "showMessage"))
+
+    def test_update_notifications_are_opt_in_and_sent_once_per_new_version(self) -> None:
+        window = self.window
+        shown = self.notifier()
+        self.waiting_update()
+        window.notify_updates()
+        shown.assert_not_called()  # off by default
+        self.settings.setValue("notifications/updates", True)
+        window.notified = {}
+        window.notify_updates()
+        shown.assert_called_once()
+        title, text = shown.call_args.args[:2]
+        self.assertEqual(title, "AppGlider: updates available")
+        self.assertEqual(text, f"{APP.name} 1.1.0 is available.")
+        window.notify_updates()
+        shown.assert_called_once()  # already told about 1.1.0
+        self.waiting_update("1.2.0")
+        window.notify_updates()
+        self.assertEqual(shown.call_count, 2)
+        self.assertIn("1.2.0", shown.call_args.args[1])
+        self.assertEqual(json.loads(self.settings.value("notifications/seen")), {APP.id: "1.2.0"})
+        window.releases[APP.id] = release_for("1.0.0", appimage_bytes())  # no longer waiting
+        window.notify_updates()
+        self.assertEqual(window.notified, {})
+        self.waiting_update("1.2.0")  # the same version waits again later: tell again
+        window.notify_updates()
+        self.assertEqual(shown.call_count, 3)
+
+    def test_notifications_stay_quiet_when_the_user_can_already_see_the_window_or_no_tray(
+        self,
+    ) -> None:
+        window = self.window
+        shown = self.notifier()
+        self.settings.setValue("notifications/updates", True)
+        self.waiting_update()
+        with (
+            patch.object(window, "isVisible", return_value=True),
+            patch.object(window, "isActiveWindow", return_value=True),
+        ):
+            window.notify_updates()
+        shown.assert_not_called()
+        self.waiting_update("1.3.0")
+        with patch("appglider.window.QSystemTrayIcon.isSystemTrayAvailable", return_value=False):
+            window.notify_updates()
+        shown.assert_not_called()
+
+    def test_several_updates_are_combined_into_one_message(self) -> None:
+        window = self.window
+        shown = self.notifier()
+        self.settings.setValue("notifications/updates", True)
+        apps = APPS[:5]
+        payload = appimage_bytes()
+        for app in apps:
+            with patch("appglider.releases.request", return_value=io.BytesIO(payload)):
+                window.library.install(
+                    app,
+                    replace(release_for("1.0.0", payload), name=f"{app.id}-1.0.0.AppImage"),
+                    Event(),
+                    lambda *args: None,
+                )
+            window.releases[app.id] = Release("2.0.0", "x", "x", 1, "0" * 64)
+        window.scan_installed()
+        window.notify_updates()
+        shown.assert_called_once()
+        text = shown.call_args.args[1]
+        self.assertTrue(text.startswith("5 updates are waiting: "))
+        self.assertTrue(text.endswith(", and 2 more."))
+
+    def test_only_scheduled_checks_notify_and_a_notification_click_opens_the_window(self) -> None:
+        window = self.window
+        self.settings.setValue("notifications/updates", True)
+        self.waiting_update()
+        with patch.object(window, "notify_updates") as notify:
+            window.release_checks_drained()  # a manual or startup refresh
+            notify.assert_not_called()
+            window.notify_pending = True  # what a scheduled check sets before it starts
+            window.release_checks_drained()
+            notify.assert_called_once()
+            self.assertFalse(window.notify_pending)
+        with (
+            patch.object(window, "refresh_releases") as refresh,
+            patch.object(window.checks, "tasks", {"app": object()}),
+        ):
+            window.scheduled_check()
+            refresh.assert_not_called()  # busy: nothing starts, nothing is left pending
+        self.assertFalse(window.notify_pending)
+        with patch.object(window, "show_launcher") as show:
+            window.tray.messageClicked.emit()
+        show.assert_called_once()
+
+    def test_notification_setting_defaults_off_and_saves(self) -> None:
+        seen: list[bool] = []
+
+        def choose() -> None:
+            dialog = self.qt.activeModalWidget()
+            if isinstance(dialog, SettingsDialog):
+                seen.append(dialog.notify_updates.isChecked())
+                dialog.notify_updates.setChecked(True)
+                dialog.accept()
+
+        QTimer.singleShot(0, choose)
+        self.window.open_settings()
+        self.assertEqual(seen, [False])
+        self.assertTrue(self.settings.value("notifications/updates", type=bool))
+        self.assertEqual(notified_versions(self.settings), {})
+        for garbage in ("not json", "[]", '{"a": 1}'):
+            self.settings.setValue("notifications/seen", garbage)
+            self.assertEqual(notified_versions(self.settings), {})
+        self.settings.setValue("notifications/seen", '{"a": "1.0", "b": 2}')
+        self.assertEqual(notified_versions(self.settings), {"a": "1.0"})
 
     def test_update_check_interval_defaults_to_six_hours_and_saves(self) -> None:
         self.assertEqual(self.window.update_timer.interval(), 6 * 3600 * 1000)

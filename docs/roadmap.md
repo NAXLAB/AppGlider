@@ -18,11 +18,11 @@ change after discussion. Something being listed here is not a promise that it wi
   your own order, or hiding an app without removing it, would need more work and only makes
   sense if people ask for it. Removing an app from the list and adding it again with a
   catalog already covers most of "hide".
-- **Desktop notification for updates:** a pop-up message when a new update appears. The
-  tray badge and tooltip already show waiting updates; a notification would be optional.
 
 ## Done
 
+- **Update notifications:** an optional desktop message when a scheduled check finds a new
+  update, once per new version. It is off unless you turn it on in Settings.
 - **Sorting and pinning:** a **Sort** box (name, installed first, updates first, order added)
   and **Pin to top** on each card, remembered between runs.
 - **Example catalog built in:** an **Example catalog** button on the welcome screen and in the

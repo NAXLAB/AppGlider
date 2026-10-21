@@ -153,6 +153,21 @@ def pinned_apps(settings: QSettings) -> set[str]:
     return {item for item in data if len(item) <= 256}
 
 
+def notified_versions(settings: QSettings) -> dict[str, str]:
+    """Update versions the user was already told about, keyed by app id."""
+    try:
+        data = json.loads(str(settings.value("notifications/seen", "{}")))
+    except ValueError:
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return {
+        key: value
+        for key, value in data.items()
+        if isinstance(key, str) and isinstance(value, str) and len(key) <= 256 and len(value) <= 128
+    }
+
+
 def blend_colours(top: QColor, bottom: QColor, weight: float) -> str:
     """Return a hex colour made of `weight` of `top` over the rest of `bottom`."""
     return QColor.fromRgbF(
@@ -676,6 +691,15 @@ class SettingsDialog(QDialog):
         )
         updates_form.addRow("Check for updates", self.check_interval)
         updates_layout.addLayout(updates_form)
+        self.notify_updates = QCheckBox("Show a desktop notification when new updates are found")
+        self.notify_updates.setChecked(
+            bool(settings.value("notifications/updates", False, type=bool))
+        )
+        self.notify_updates.setToolTip(
+            "Only for the scheduled checks, while AppGlider is in the background, and once "
+            "for each new version."
+        )
+        updates_layout.addWidget(self.notify_updates)
         updates_note = QLabel(
             "Checks the apps you have installed while AppGlider is running, including in the "
             "tray. Checking an app that has not changed does not use GitHub's request allowance "
@@ -1009,6 +1033,9 @@ class LauncherWindow(QMainWindow):
         self.tray_menu.aboutToShow.connect(self.scan_installed)
         self.tray.setContextMenu(self.tray_menu)
         self.tray.activated.connect(self.tray_activated)
+        self.tray.messageClicked.connect(self.show_launcher)
+        self.notify_pending = False
+        self.notified = notified_versions(self.settings)
         if QSystemTrayIcon.isSystemTrayAvailable():
             self.tray.show()
         self.apply_theme()
@@ -1039,7 +1066,39 @@ class LauncherWindow(QMainWindow):
             and self.installed
             and not github_status.quota_low()
         ):
+            self.notify_pending = True
             self.refresh_releases()
+            self.notify_pending = self.notify_pending and self.checks.busy
+
+    def notify_updates(self) -> None:
+        """Tell the user, once per new version, that updates are waiting (opt-in)."""
+        waiting = {
+            app.id: release.version
+            for app in self.apps
+            if app.id in self.installed
+            and self.has_update(app.id)
+            and (release := self.releases.get(app.id)) is not None
+        }
+        new = [
+            app for app in self.apps if waiting.get(app.id) not in (None, self.notified.get(app.id))
+        ]
+        self.notified = dict(waiting)
+        self.settings.setValue("notifications/seen", json.dumps(self.notified))
+        if (
+            not new
+            or not self.settings.value("notifications/updates", False, type=bool)
+            or not QSystemTrayIcon.isSystemTrayAvailable()
+            or not self.tray.isVisible()
+            or (self.isVisible() and self.isActiveWindow())
+        ):
+            return
+        names = [f"{app.name} {waiting[app.id]}" for app in new]
+        if len(names) == 1:
+            text = f"{names[0]} is available."
+        else:
+            more = f", and {len(names) - 3} more" if len(names) > 3 else ""
+            text = f"{len(names)} updates are waiting: {', '.join(names[:3])}{more}."
+        self.tray.showMessage("AppGlider: updates available", text, self.tray_icons[1], 15000)
 
     def update_github_status(self) -> None:
         label, details, limited = github_request_status()
@@ -1257,6 +1316,7 @@ class LauncherWindow(QMainWindow):
             self.settings.setValue(
                 "general/check-interval-hours", dialog.check_interval.currentData()
             )
+            self.settings.setValue("notifications/updates", dialog.notify_updates.isChecked())
             self.schedule_update_checks()
             self.settings.setValue("appearance/theme", dialog.theme.currentText())
             self.settings.setValue("installation/folder", dialog.folder.text())
@@ -1573,6 +1633,9 @@ class LauncherWindow(QMainWindow):
             self.close()
             return
         self.refresh()
+        if self.notify_pending:
+            self.notify_pending = False
+            self.notify_updates()
         if self.task is None:
             self.footer.setText(
                 "Release refresh finished."

@@ -81,6 +81,15 @@ AppGlider needs no GitHub account or token. It uses GitHub's public API, which a
   count becomes unknown until the next response; AppGlider does not assume the full
   allowance is available. Retry times survive restarts.
 
+## Update notifications
+
+The optional notification is sent through the system tray's message support, only after a
+scheduled check (never at startup or for **Refresh releases**), only if the tray is available
+and visible, and not while the AppGlider window is shown and active. AppGlider remembers the
+version it announced for each app, so an update is announced once; when the update is
+installed or goes away, the memory is cleared. Updates that are already waiting when the
+option is switched on are not announced, only new ones.
+
 ## Stable and preview versions
 
 - GitHub's own flags decide whether a release is stable or a preview. Draft releases are
@@ -193,7 +202,9 @@ file. A corrupt file is preserved and reported, never overwritten with an empty 
 Only one AppGlider runs per data folder; starting it again raises the running window.
 
 Choices such as the Appearance, update schedule, sort order (`library/sort`) and pinned apps
-(`library/pinned`, a JSON list of app identifiers) live in the settings file. Unreadable or
+(`library/pinned`, a JSON list of app identifiers), the notification choice
+(`notifications/updates`) and the versions already announced (`notifications/seen`, a JSON
+object) live in the settings file. Unreadable or
 unknown values fall back to the defaults instead of causing an error.
 
 ## Menu entries

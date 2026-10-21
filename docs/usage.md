@@ -95,6 +95,15 @@ Checks only happen while AppGlider is running. When at least one update is waiti
 tray icon gets an amber badge with an up arrow, and its tooltip says how many ("AppGlider ·
 Updates: 2").
 
+**Desktop notifications (optional).** Tick **Settings → General → Show a desktop
+notification when new updates are found** and AppGlider also pops up a message when a
+scheduled check finds an update you have not been told about yet, such as "PhotoCraft 1.1.0
+is available." Several updates are combined into one message, you are told once for each new
+version, and nothing appears while you are looking at the AppGlider window or when you press
+**Refresh releases** yourself. Clicking the message opens AppGlider. It is off by default,
+and it needs a system tray; whether and how your desktop shows the message is up to your
+desktop.
+
 GitHub lets programs make about 60 anonymous requests an hour. AppGlider is careful with
 them: to find out whether an app you have installed has a newer version, it first looks at
 the app's ordinary GitHub release page (or, for apps with previews turned on, its public
@@ -181,8 +190,8 @@ imports the rest. A file that is not a proper catalog adds nothing at all.
 
 Open **Settings** (top right). The sections are:
 
-- **General**: Appearance, whether closing the window keeps AppGlider in the tray, and how
-  often to check for updates.
+- **General**: Appearance, whether closing the window keeps AppGlider in the tray, how often
+  to check for updates, and whether to show update notifications.
 - **Applications**: GitHub status and the **Repositories…** manager.
 - **Storage**: the folder new apps are installed into.
 - **About**: the version and project links (the version number at the bottom right opens
