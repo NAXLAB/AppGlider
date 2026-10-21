@@ -14,7 +14,7 @@ from PySide6.QtGui import QImage, QImageReader, QPixmap
 
 from appglider import APP_ICON, github_status, releases
 from appglider.catalog import App
-from appglider.releases import RateLimited, check_cancel, read_metadata
+from appglider.releases import check_cancel, read_metadata
 
 MAX_ICON_BYTES = 2 * 1024 * 1024
 
@@ -134,6 +134,11 @@ SKIPPED_WORDS = {
     "snap", "cmake", "contrib", "tools", "scripts", "script", "website", "web",
 }  # fmt: skip
 SIZE_FOLDER = re.compile(r"(\d+)x\d+")
+# Words in a file name that mark a variant (another platform, a banner...), not the app icon.
+VARIANT_WORDS = {
+    "mac", "macos", "osx", "win", "windows", "ios", "android", "title", "about", "gradient",
+    "grayscale", "splash", "badge", "banner", "screenshot", "wordmark",
+}  # fmt: skip
 
 
 def words(path: str) -> list[str]:
@@ -161,8 +166,8 @@ def api_files(app: App, cancel: Event) -> dict[str, int | None] | None:
         tree = json.loads(
             read_metadata(f"https://api.github.com/repos/{app.repo}/git/trees/HEAD?recursive=1")
         )
-    except RateLimited:
-        return None
+    except ValueError:
+        return None  # rate limited, or a listing too large to read: browse the web pages
     if (
         not isinstance(tree, dict)
         or tree.get("truncated")
@@ -188,12 +193,14 @@ def api_files(app: App, cancel: Event) -> dict[str, int | None] | None:
     return files
 
 
-def web_files(app: App, cancel: Event) -> dict[str, int | None]:
+def web_files(app: App, cancel: Event) -> tuple[dict[str, int | None], str]:
     """Find files by browsing the repository's web folders, without any API request.
 
     Every top-level and second-level folder is opened; deeper ones only when their path
     looks like artwork, most promising first. The walk is capped in pages and in time.
+    Also returns the repository's current name, which differs from the saved one if it moved.
     """
+    repo = app.repo
     files: dict[str, int | None] = {}
     queue: list[tuple[str, int]] = [("", 0)]
     started, opened = time.monotonic(), 0
@@ -202,10 +209,10 @@ def web_files(app: App, cancel: Event) -> dict[str, int | None]:
         queue.sort(key=lambda entry: (-folder_priority(entry[0]), entry[1]))
         path, depth = queue.pop(0)
         try:
-            items = releases.web_listing(app.repo, path, cancel)
+            items, repo = releases.web_listing(repo, path, cancel)
         except ValueError:
             if opened == 0:
-                return files  # the very first page failed: nothing to learn here
+                return files, repo  # the very first page failed: nothing to learn here
             continue
         opened += 1
         sizes = [
@@ -224,7 +231,7 @@ def web_files(app: App, cancel: Event) -> dict[str, int | None]:
             ):
                 queue.append((item["path"], depth + 1))
         cancel.wait(LISTING_PAUSE)
-    return files
+    return files, repo
 
 
 def discover_icons(app: App, cancel: Event) -> tuple[IconCandidate, ...]:
@@ -236,12 +243,13 @@ def discover_icons(app: App, cancel: Event) -> tuple[IconCandidate, ...]:
     raw.githubusercontent.com, which costs no API requests.
     """
     check_cancel(cancel)
+    repo = app.repo
     files = None if github_status.quota_low() else api_files(app, cancel)
     if files is None:
-        files = web_files(app, cancel)
+        files, repo = web_files(app, cancel)
 
     def read_file(path: str) -> bytes:
-        return releases.raw_bytes(app.repo, path, MAX_ICON_BYTES, cancel)
+        return releases.raw_bytes(repo, path, MAX_ICON_BYTES, cancel)
 
     declared: set[str] = set()
     for path in sorted(path for path in files if path.endswith(".desktop"))[:2]:
@@ -257,10 +265,20 @@ def discover_icons(app: App, cancel: Event) -> tuple[IconCandidate, ...]:
 
     slug = re.sub(r"[^a-z0-9]", "", app.repo.split("/")[1].lower())
 
+    def resolution_of(lower: str) -> int:
+        """A size written in the path: a 512x512 folder, or a name like icon_192px or icon-256."""
+        sizes = re.findall(r"(?:^|/)(\d+)x\d+(?:/|$)", lower)
+        sizes += re.findall(r"(\d{2,4})px", lower) + re.findall(r"[-_](\d{2,4})\.[a-z]+$", lower)
+        return max((int(n) for n in sizes), default=0)
+
+    def named_after_project(path: str) -> bool:
+        stem = re.sub(r"[^a-z0-9]", "", PurePosixPath(path).stem.lower())
+        return len(slug) >= 4 and slug in stem
+
     def rank(path: str) -> tuple[int, int, int, int, int, str]:
         lower = path.lower()
         stem = PurePosixPath(lower).stem
-        resolution = max((int(n) for n in re.findall(r"(?:^|/)(\d+)x\d+(?:/|$)", lower)), default=0)
+        resolution = resolution_of(lower)
         return (
             int(stem not in declared),
             int(slug not in re.sub(r"[^a-z0-9]", "", stem)),
@@ -288,9 +306,11 @@ def discover_icons(app: App, cancel: Event) -> tuple[IconCandidate, ...]:
                 "win32",
             )
         )
+        and not any(word in VARIANT_WORDS for word in words(PurePosixPath(path).stem))
         and (
             PurePosixPath(path.lower()).stem in declared
             or any(word in path.lower() for word in ("icon", "logo", "brand/"))
+            or named_after_project(path)
         )
     ]
     result: list[IconCandidate] = []

@@ -115,10 +115,11 @@ class IconTests(unittest.TestCase):
                 if file.startswith(prefix):
                     head, _, rest = file[len(prefix) :].partition("/")
                     names[head] = "directory" if rest else "file"
-            return [
+            items = [
                 {"name": name, "path": prefix + name, "contentType": kind}
                 for name, kind in sorted(names.items())
             ]
+            return items, repo
 
         return entries, tree, raw, listing
 
@@ -201,6 +202,49 @@ class IconTests(unittest.TestCase):
         result, *_ = self.discover(plain)
         self.assertEqual(result[0].name, "assets/icons/example-app-icon.svg")
 
+    def test_images_named_after_the_project_count_and_platform_variants_do_not(self):
+        files = {
+            f"resources/images/{name}": SVG
+            for name in (
+                "ExampleApp.svg",
+                "ExampleApp.png",
+                "ExampleApp_192px.png",
+                "ExampleApp_128px.png",
+                "ExampleApp_32px.png",
+                "ExampleApp-mac_128px.png",
+                "ExampleApp_about.svg",
+                "ExampleApp_gradient.svg",
+                "ExampleApp_192px_grayscale.png",
+                "ExampleAppTitle.png",
+                "unrelated.png",
+                "ams_icon.svg",
+            )
+        }
+        result, *_ = self.discover(files)
+        names = [icon.name.rsplit("/", 1)[1] for icon in result]
+        self.assertEqual(
+            names[:3], ["ExampleApp_192px.png", "ExampleApp_128px.png", "ExampleApp_32px.png"][:3]
+        )
+        self.assertNotIn("ExampleApp-mac_128px.png", names)
+        self.assertNotIn("ExampleApp_about.svg", names)
+        self.assertNotIn("ExampleApp_192px_grayscale.png", names)
+        self.assertNotIn("unrelated.png", names)
+
+    def test_a_very_short_project_name_does_not_match_everything_containing_it(self):
+        short = {f"images/{n}.png": SVG for n in ("app", "happy", "map", "icon")}
+        entries = [
+            {"path": path, "sha": "a" * 40, "mode": "100644", "type": "blob", "size": len(SVG)}
+            for path in short
+        ]
+        tree = json.dumps({"tree": entries, "truncated": False}).encode()
+        with (
+            patch("appglider.icons.read_metadata", return_value=tree),
+            patch("appglider.icons.releases.raw_bytes", return_value=SVG),
+            patch("appglider.icons.github_status.quota_low", return_value=False),
+        ):
+            found = [icon.name for icon in discover_icons(custom_app("owner/app"), Event())]
+        self.assertEqual(found, ["images/icon.png"])  # "app" is too short to count as a name
+
     def test_bad_candidates_are_bounded_and_missing_images_are_skipped(self):
         files = {f"assets/icon-{n}.png": b"broken" + bytes([n]) for n in range(20)}
         result, api, raw_read, _ = self.discover(files)
@@ -225,7 +269,7 @@ class IconTests(unittest.TestCase):
 
         def listing(repo, path, event):
             cancel.set()
-            return [{"name": "a", "path": "a", "contentType": "directory"}]
+            return [{"name": "a", "path": "a", "contentType": "directory"}], repo
 
         with (
             patch("appglider.icons.github_status.quota_low", return_value=True),
@@ -234,6 +278,45 @@ class IconTests(unittest.TestCase):
             self.assertRaises(Cancelled),
         ):
             discover_icons(CUSTOM, cancel)
+
+    def test_a_moved_repository_is_followed_by_its_new_name(self):
+        calls, reads = [], []
+
+        def listing(repo, path, cancel):
+            calls.append(repo)
+            if path == "":
+                return [
+                    {"name": "assets", "path": "assets", "contentType": "directory"},
+                    {"name": "logo.svg", "path": "logo.svg", "contentType": "file"},
+                ], "new-owner/new-name"
+            return [], repo
+
+        def raw(repo, path, limit, cancel):
+            reads.append(repo)
+            return SVG
+
+        with (
+            patch("appglider.icons.github_status.quota_low", return_value=True),
+            patch("appglider.icons.releases.web_listing", side_effect=listing),
+            patch("appglider.icons.releases.raw_bytes", side_effect=raw),
+            patch("appglider.icons.LISTING_PAUSE", 0),
+        ):
+            result = discover_icons(CUSTOM, Event())
+        self.assertEqual([icon.name for icon in result], ["logo.svg"])
+        self.assertEqual(calls[0], "owner/example-app")
+        self.assertEqual(set(calls[1:]), {"new-owner/new-name"})  # no redirect on later pages
+        self.assertEqual(reads, ["new-owner/new-name"])
+
+    def test_a_listing_too_large_for_the_api_falls_back_to_the_web_walk(self):
+        for error in (
+            ValueError("The release metadata is too large."),
+            RateLimited("api.github.com", 1),
+        ):
+            with self.subTest(error=error):
+                result, api, _, web = self.discover(self.LAYOUT, tree=error)
+                self.assertEqual(len(result), 2)
+                api.assert_called_once()
+                self.assertTrue(web.called)
 
     def walk(self, listing, **limits):
         with (
@@ -244,7 +327,7 @@ class IconTests(unittest.TestCase):
                 patcher = patch(f"appglider.icons.{name}", value)
                 patcher.start()
                 self.addCleanup(patcher.stop)
-            files = web_files(CUSTOM, Event())
+            files, _ = web_files(CUSTOM, Event())
         return files, [call.args[1] for call in web.call_args_list]
 
     def test_the_walk_opens_top_levels_then_only_artwork_like_folders_and_skips_dependencies(self):
@@ -282,7 +365,7 @@ class IconTests(unittest.TestCase):
                     else "file",
                 }
                 for name in tree.get(path, [])
-            ]
+            ], repo
 
         files, opened = self.walk(listing)
         self.assertNotIn("3rdParty", opened)
@@ -305,7 +388,7 @@ class IconTests(unittest.TestCase):
             return [
                 {"name": f"d{i}", "path": f"{path}/d{i}".lstrip("/"), "contentType": "directory"}
                 for i in range(3)
-            ]
+            ], repo
 
         _, opened = self.walk(endless, MAX_LISTINGS=7)
         self.assertEqual(len(opened), 7)
@@ -325,7 +408,7 @@ class IconTests(unittest.TestCase):
             return [
                 {"name": "assets", "path": "assets", "contentType": "directory"},
                 {"name": "logo.svg", "path": "logo.svg", "contentType": "file"},
-            ]
+            ], repo
 
         files, opened = self.walk(later_fails)
         self.assertEqual(list(files), ["logo.svg"])  # what was learnt before the failure stays

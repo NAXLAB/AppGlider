@@ -169,9 +169,18 @@ GitHub changes that page or no checksum can be found, AppGlider stops and explai
   folders, and stops after 40 pages or 60 seconds. Expect about 15 to 25 seconds.
   GitHub's folder JSON is an undocumented part of its website, so if it ever changes the walk
   simply finds nothing and you can still choose an image yourself.
+- A PNG or SVG is a candidate if its path contains `icon`, `logo` or `brand/`, if it is the
+  icon named in the project's `.desktop` file, or if its file name contains the project's name
+  (for example `OrcaSlicer_192px.png`; names under four characters do not count). Files whose
+  names carry a variant word (`mac`, `win`, `about`, `title`, `gradient`, `grayscale`,
+  `splash`, `badge`, `banner`, `screenshot`...) are skipped.
 - Candidates are ranked: the icon named in the project's `.desktop` file first (including
   names like `com.example.app`), then files named after the project, then PNGs under
-  `linux` or `hicolor`, larger sizes before smaller. Up to four are offered.
+  `linux` or `hicolor`, then larger sizes before smaller (read from folders like `512x512`
+  or names like `icon_192px`). Up to four are offered.
+- Repositories that were renamed or moved are followed: redirects are accepted only to
+  GitHub's own hosts, and the new name is used for the remaining pages. A file list too
+  large for the API (some big projects) simply uses the web walk instead.
 - The apps in the ArtCraft example catalog use icons bundled with AppGlider.
 
 ## Catalog files

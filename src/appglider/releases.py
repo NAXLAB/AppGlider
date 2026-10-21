@@ -267,14 +267,19 @@ MAX_FEED = 8 * 1024 * 1024
 FEED_LINK = re.compile(r'<link[^>]*rel="alternate"[^>]*href="([^"]+)"')
 
 
-def _fetch(url: str, headers: dict[str, str], limit: int) -> bytes:
-    """Read a small GitHub web resource without the API; never follows redirects."""
+def _fetch(url: str, headers: dict[str, str], limit: int) -> tuple[bytes, str]:
+    """Read a small GitHub web resource without the API.
+
+    Redirects (a renamed or moved repository) are followed only to GitHub's own trusted hosts.
+    Returns the body and the address it finally came from.
+    """
     if not valid_url(url):
         raise ValueError("Refusing an untrusted download location.")
     req = Request(url, headers={"User-Agent": f"AppGlider/{APP_VERSION}", **headers})
     try:
-        with build_opener(NoRedirect()).open(req, timeout=20) as reply:
+        with build_opener(GitHubRedirect()).open(req, timeout=20) as reply:
             body: bytes = reply.read(limit + 1)
+            final: str = reply.geturl()
     except HTTPError as error:
         code = error.code
         error.close()
@@ -283,24 +288,30 @@ def _fetch(url: str, headers: dict[str, str], limit: int) -> bytes:
         raise ValueError(UNREACHABLE) from error
     if len(body) > limit:
         raise ValueError("The file is larger than the allowed size.")
-    return body
+    return body, final
 
 
 def raw_bytes(repo: str, path: str, limit: int, cancel: Event) -> bytes:
     """A file of the default branch from raw.githubusercontent.com (no API request)."""
     check_cancel(cancel)
-    return _fetch(f"https://raw.githubusercontent.com/{repo}/HEAD/{quote(path)}", {}, limit)
+    return _fetch(f"https://raw.githubusercontent.com/{repo}/HEAD/{quote(path)}", {}, limit)[0]
 
 
-def web_listing(repo: str, path: str, cancel: Event) -> list[dict[str, str]]:
+def web_listing(repo: str, path: str, cancel: Event) -> tuple[list[dict[str, str]], str]:
     """One folder of the default branch as GitHub's file browser reports it (no API request).
 
-    Each item has `name`, `path` and `contentType` ("file" or "directory"). The page is an
-    undocumented interface of github.com, so any surprise is reported as a ValueError.
+    Each item has `name`, `path` and `contentType` ("file" or "directory"). Also returns the
+    repository's current `owner/name`, which differs from `repo` when it was renamed or moved,
+    so later requests can go straight to it. The page is an undocumented interface of
+    github.com, so any surprise is reported as a ValueError.
     """
     check_cancel(cancel)
     url = f"https://github.com/{repo}/tree/HEAD/{quote(path)}".rstrip("/")
-    body = _fetch(url, {"Accept": "application/json"}, MAX_LISTING)
+    body, final = _fetch(url, {"Accept": "application/json"}, MAX_LISTING)
+    parts = urlsplit(final).path.split("/")
+    current = "/".join(parts[1:3]) if len(parts) > 3 and parts[3] == "tree" else repo
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9_.-]{1,100}", current):
+        current = repo
     try:
         items = json.loads(body)["payload"]["codeViewTreeRoute"]["tree"]["items"]
     except (ValueError, KeyError, TypeError) as error:
@@ -319,7 +330,7 @@ def web_listing(repo: str, path: str, cancel: Event) -> list[dict[str, str]]:
             result.append(
                 {"name": item["name"], "path": item["path"], "contentType": item["contentType"]}
             )
-    return result
+    return result, current
 
 
 def feed_request(repo: str, etag: str) -> tuple[int, bytes, str] | None:

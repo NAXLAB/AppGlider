@@ -408,27 +408,33 @@ class FeedTests(unittest.TestCase):
 
 
 class WebFetchTests(unittest.TestCase):
-    def opener(self, *, error=None, body=b"", headers=None):
+    def opener(self, *, error=None, body=b"", final=None):
         class Reply(io.BytesIO):
             def __enter__(self):
                 return self
+
+            def geturl(self):
+                return final or self.url
 
         class Opener:
             def open(self, request, timeout):
                 self.request, self.timeout = request, timeout
                 if error is not None:
                     raise error
-                return Reply(body)
+                reply = Reply(body)
+                reply.url = request.full_url
+                return reply
 
         opener = Opener()
-        return opener, patch.object(releases, "build_opener", return_value=opener)
+        patched = patch.object(releases, "build_opener", return_value=opener)
+        return opener, patched
 
     def http(self, code):
         return HTTPError("u", code, "x", Message(), io.BytesIO())
 
     def test_raw_files_come_from_the_raw_host_with_a_quoted_path_and_a_size_limit(self):
         opener, patched = self.opener(body=b"PNGDATA")
-        with patched:
+        with patched as build:
             data = releases.raw_bytes("owner/repo", "assets/my icon#1.png", 100, Event())
         self.assertEqual(data, b"PNGDATA")
         self.assertEqual(
@@ -437,6 +443,8 @@ class WebFetchTests(unittest.TestCase):
         )
         self.assertTrue(opener.request.get_header("User-agent").startswith("AppGlider/"))
         self.assertEqual(opener.timeout, 20)
+        (handler,) = build.call_args.args  # redirects are followed only to trusted hosts
+        self.assertIsInstance(handler, releases.GitHubRedirect)
         with self.opener(body=b"x" * 101)[1], self.assertRaisesRegex(ValueError, "larger"):
             releases.raw_bytes("owner/repo", "a.png", 100, Event())
 
@@ -447,6 +455,7 @@ class WebFetchTests(unittest.TestCase):
             (self.http(500), "HTTP 500"),
             (URLError("offline"), "Could not reach GitHub"),
             (TimeoutError(), "Could not reach GitHub"),
+            (ValueError("GitHub redirected to an untrusted download location."), "untrusted"),
         ):
             with self.subTest(error=error), self.opener(error=error)[1]:
                 with self.assertRaisesRegex(ValueError, message):
@@ -490,8 +499,8 @@ class WebFetchTests(unittest.TestCase):
         ]
         opener, patched = self.opener(body=self.page([good, folder, *junk]))
         with patched:
-            items = releases.web_listing("owner/repo", "assets", Event())
-        self.assertEqual(items, [good, folder])
+            items, repo = releases.web_listing("owner/repo", "assets", Event())
+        self.assertEqual((items, repo), ([good, folder], "owner/repo"))
         self.assertEqual(opener.request.full_url, "https://github.com/owner/repo/tree/HEAD/assets")
         self.assertEqual(opener.request.get_header("Accept"), "application/json")
         opener, patched = self.opener(body=self.page([good]))
@@ -499,18 +508,30 @@ class WebFetchTests(unittest.TestCase):
             releases.web_listing("owner/repo", "", Event())
         self.assertEqual(opener.request.full_url, "https://github.com/owner/repo/tree/HEAD")
 
+    def test_a_moved_repository_reports_its_current_name_so_later_requests_skip_the_redirect(self):
+        for final, expected in (
+            ("https://github.com/OrcaSlicer/OrcaSlicer/tree/HEAD", "OrcaSlicer/OrcaSlicer"),
+            ("https://github.com/New-Owner/new.repo/tree/HEAD/assets/icons", "New-Owner/new.repo"),
+            ("https://github.com/owner/repo/tree/HEAD/assets", "owner/repo"),
+            ("https://github.com/blob/only", "owner/repo"),  # not a tree page: keep the saved name
+            ("https://github.com/../../x/tree/HEAD", "owner/repo"),
+            ("https://github.com/bad name/x y/tree/HEAD", "owner/repo"),
+        ):
+            with self.subTest(final=final), self.opener(body=self.page([]), final=final)[1]:
+                self.assertEqual(releases.web_listing("owner/repo", "", Event())[1], expected)
+
     def test_a_listing_in_an_unexpected_form_is_an_error_not_a_guess(self):
         for body in (b"not json", b"[]", b'{"payload": {}}', b'{"payload": 5}', b"null"):
             with self.subTest(body=body), self.opener(body=body)[1]:
                 with self.assertRaisesRegex(ValueError, "expected form"):
                     releases.web_listing("owner/repo", "", Event())
         with self.opener(body=self.page("not a list"))[1]:
-            self.assertEqual(releases.web_listing("owner/repo", "", Event()), [])
+            self.assertEqual(releases.web_listing("owner/repo", "", Event())[0], [])
         with self.opener(body=b"x" * (releases.MAX_LISTING + 1))[1]:
             with self.assertRaises(ValueError):
                 releases.web_listing("owner/repo", "", Event())
         with self.opener(error=self.http(301))[1], self.assertRaisesRegex(ValueError, "HTTP 301"):
-            releases.web_listing("owner/repo", "", Event())  # redirects are never followed
+            releases.web_listing("owner/repo", "", Event())  # a redirect that could not be used
 
 
 class LatestTagTests(unittest.TestCase):
