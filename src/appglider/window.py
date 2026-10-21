@@ -659,10 +659,10 @@ def screen_area(widget: QWidget | None) -> QRect:
     return screen.availableGeometry() if screen is not None else QRect(0, 0, 1920, 1080)
 
 
-def chevron_path(colour: str) -> str:
-    """Return a cached down-arrow image in the given colour for combo boxes."""
+def glyph_path(name: str, colour: str, points: list[QPointF]) -> str:
+    """Return a cached stroked-line glyph in the given colour, for stylesheet images."""
     folder = Path(QStandardPaths.writableLocation(QStandardPaths.StandardLocation.CacheLocation))
-    path = folder / f"chevron-{colour.lstrip('#')}.png"
+    path = folder / f"{name}-{colour.lstrip('#')}.png"
     if not path.exists():
         pixmap = QPixmap(24, 24)
         pixmap.fill(Qt.GlobalColor.transparent)
@@ -672,11 +672,19 @@ def chevron_path(colour: str) -> str:
         pen.setCapStyle(Qt.PenCapStyle.RoundCap)
         pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
         painter.setPen(pen)
-        painter.drawPolyline([QPointF(7, 9.5), QPointF(12, 14.5), QPointF(17, 9.5)])
+        painter.drawPolyline(points)
         painter.end()
         folder.mkdir(parents=True, exist_ok=True)
         pixmap.save(str(path))
     return path.as_posix()
+
+
+def chevron_path(colour: str) -> str:
+    return glyph_path("chevron", colour, [QPointF(7, 9.5), QPointF(12, 14.5), QPointF(17, 9.5)])
+
+
+def tick_path(colour: str) -> str:
+    return glyph_path("tick", colour, [QPointF(6, 12.5), QPointF(10.5, 17), QPointF(18, 7.5)])
 
 
 def cog_icon(colour: str) -> QIcon:
@@ -2026,6 +2034,19 @@ class LauncherWindow(QMainWindow):
                 background: {surface}; color: {accent}; }}
             QLineEdit, QComboBox {{ background: {surface}; color: {foreground};
                 border: 1px solid {border}; border-radius: 7px; padding: 9px; }}
+            QCheckBox::indicator, QRadioButton::indicator {{ width: 14px; height: 14px;
+                border: 2px solid {muted}; background: {surface}; }}
+            QCheckBox::indicator {{ border-radius: 5px; }}
+            QRadioButton::indicator {{ border-radius: 9px; }}
+            QCheckBox::indicator:hover, QRadioButton::indicator:hover {{ border-color: {accent}; }}
+            QCheckBox::indicator:checked {{ background: {accent}; border-color: {accent};
+                image: url({tick_path(on_accent)}); }}
+            QRadioButton::indicator:checked {{ border-color: {accent};
+                background: qradialgradient(cx: 0.5, cy: 0.5, radius: 0.5, fx: 0.5, fy: 0.5,
+                    stop: 0 {accent}, stop: 0.45 {accent},
+                    stop: 0.55 {surface}, stop: 1 {surface}); }}
+            QCheckBox::indicator:disabled, QRadioButton::indicator:disabled {{
+                border-color: {border}; }}
             QComboBox {{ min-height: 20px; }}
             QComboBox::drop-down {{ border: none; width: 28px; }}
             QComboBox::down-arrow {{ image: url({chevron_path(foreground)});

@@ -26,7 +26,11 @@ newer version is out. If you want the "how does it actually work" details, see t
 A new library is empty. You will see a welcome message with **+ Add app**, **Import
 catalog…** and **Example catalog**.
 
-Once you have apps, the tabs along the top filter them:
+Once you have apps, the tabs along the top filter them. The **cog** at the top right opens
+Settings; **Sort** and **Refresh releases** sit above the cards.
+
+![The AppGlider window showing six installed apps, two with updates waiting](previews/appglider-library.png)
+
 
 - **All apps**: everything in your library, installed or not.
 - **Installed (N)**: the apps AppGlider has installed.
@@ -56,9 +60,11 @@ library.
 2. Paste the repository's address, such as `https://github.com/owner/project`, and give it
    a name if you like.
 3. Leave **Stable releases only** selected unless you want to try previews.
-4. Choose **Inspect repository**. AppGlider looks at the latest release and shows what it
+4. Choose **Inspect repository** (or press Enter). AppGlider looks at the latest release and shows what it
    found.
 5. Choose **Add to library**. This only creates a card. It does not install anything yet.
+
+![The Add an application page after inspecting a repository](previews/appglider-add-app.png)
 
 The project needs a published release with an AppImage file and a published checksum. If
 something is missing, AppGlider tells you what.
@@ -120,8 +126,10 @@ cancelled never replaces the version you already have.
 
 Projects often publish test versions ("beta", "preview") ahead of the real thing. By
 default AppGlider only offers **stable** releases. To include previews for an app, open
-**⋯ → Application preferences…** on its card, or **Settings → Applications**, and choose **Stable and prerelease versions**. **Check available release**
-shows what that would give you without installing anything.
+**⋯ → Application preferences…** on its card, or **Settings → Applications** and choose the
+app, then under **Updates** choose **Stable and prerelease versions**. **Check now** shows what that would give you without installing anything.
+
+![An app's page in Settings: Updates and Application icon](previews/appglider-app-preferences.png)
 
 - Green **Latest** badges mark the project's latest stable release. Amber **Pre-release**
   badges mark previews.
@@ -136,7 +144,7 @@ Some projects publish several AppImages for the same version, for example one fo
 choice appears when you add the app. Pick the one that suits your system, following that
 project's own advice. AppGlider cannot tell which distribution you run. Your choice is
 remembered for later updates. To change it, use **⋯ → Application preferences… → Build
-variant → Choose another build…**.
+variant → Choose another build…** (or open the app from **Settings → Applications**).
 
 If the project later renames its files so AppGlider can no longer tell which build you
 meant, the card shows **Choose build**. Your installed copy keeps working, and nothing
@@ -149,10 +157,10 @@ a second or two. If GitHub's request allowance is low it browses the project's w
 instead, which uses none of the allowance and usually takes 5 to 10 seconds (up to about 20 for
 some big projects). While it works you will see a moving bar and a message such as "Looking
 through OrcaSlicer's folders… 7 pages so far", so you can tell it has not stopped. To stop it,
-close the window. You can pick one
-of the candidates it finds, or **Choose icon…** to use your own PNG or SVG file. To change
-an app's icon later, open **Settings → Applications**, select the app and
-use **Find icons** or **Choose icon…**. Icons are saved on your computer and work offline.
+go back or close Settings. You can pick one
+of the candidates it finds, or **Choose file…** to use your own PNG or SVG file. To change
+an app's icon later, open **Settings → Applications**, choose the app and
+use **Find online** or **Choose file…** under **Application icon**. Icons are saved on your computer and work offline.
 If there is no icon, AppGlider's own is used. Apps from the example catalog come with their
 icons.
 
@@ -204,6 +212,10 @@ Open **Settings** (the cog at the top right). The sections are:
 - **GitHub**: how many requests GitHub reports as remaining (no requests are made).
 - **About**: the version and project links (the version number at the bottom right opens
   it).
+
+![Settings, General page](previews/appglider-settings.png)
+
+![Settings, Applications page](previews/appglider-applications.png)
 
 **Appearance** offers System (the default, which follows your desktop's colours), Light,
 Dark, and three coloured themes: Forest, Earthy and Sandstone. The window changes as you

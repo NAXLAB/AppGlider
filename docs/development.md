@@ -113,5 +113,5 @@ See [GitHub Actions](builds.md) for the automated build process, and the
 - `docs/technical-notes.md` holds the detail (release matching, request budgets, files,
   recovery). Put new technical explanations there and link to them from the guide.
 - Update `docs/usage.md` whenever a button, menu item or setting changes, and re-take the
-  README screenshot (`docs/previews/appglider-library.png`, default appearance) after visible
-  interface changes.
+  screenshots in `docs/previews/` (taken in the Dark theme from a disposable library, with the
+  window at 1040×816 and Settings at 1040×800) after visible interface changes.

@@ -30,7 +30,7 @@ change after discussion. Something being listed here is not a promise that it wi
 - **Sorting and pinning:** a **Sort** box (name, installed first, updates first, order added)
   and **Pin to top** on each card, remembered between runs.
 - **Example catalog built in:** an **Example catalog** button on the welcome screen and in the
-  Repositories window adds the ArtCraft apps and SolidCraft without downloading anything.
+  Settings → Applications → Catalog menu adds the ArtCraft apps and SolidCraft without downloading anything.
 - **Cheaper update checks:** checking an app that has not changed now asks GitHub's ordinary
   release page first (or its public release feed, for apps with previews turned on) and uses
   none of the free request allowance. The update schedule can now run as often as every hour.
@@ -41,5 +41,5 @@ change after discussion. Something being listed here is not a promise that it wi
   SolidCraft are an example catalog you can import instead of being built in.
 - **Catalogs:** import and export plain text lists of apps, with a preview before anything
   is added.
-- **GitHub status:** a footer label and a settings page show how many of GitHub's
+- **GitHub status:** a footer label and a Settings → GitHub page show how many of GitHub's
   anonymous requests are left and when checks were last made.
