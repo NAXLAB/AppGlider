@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QPlainTextEdit,
+    QProgressBar,
     QPushButton,
     QScrollArea,
     QStyledItemDelegate,
@@ -320,6 +321,13 @@ class RepositoriesDialog(QDialog):
         self.status.setObjectName("muted")
         self.status.setWordWrap(True)
         footer.addWidget(self.status, stretch=1)
+        self.busy_bar = QProgressBar()
+        self.busy_bar.setRange(0, 0)  # moving, because the time needed is not known
+        self.busy_bar.setFixedWidth(140)
+        self.busy_bar.setTextVisible(False)
+        self.busy_bar.setAccessibleName("Search in progress")
+        self.busy_bar.hide()
+        footer.addWidget(self.busy_bar)
         self.import_button = QPushButton("Import catalog…")
         self.import_button.setToolTip("Add apps from a plain-text TOML catalog file.")
         self.import_button.clicked.connect(self.import_catalog)
@@ -540,12 +548,13 @@ class RepositoriesDialog(QDialog):
             result = TaskResult("Release inspected.", {app.id: release})
             try:
                 if lookup_icons:
-                    result.icons = discover_icons(app, cancel)
+                    result.icons = discover_icons(app, cancel, lambda text: progress(text, 0, 0))
             except (OSError, ValueError) as error:
                 result.errors[app.id] = f"Icon lookup unavailable: {error}"
             return result
 
         self.task = Task(operation)
+        self.task.signals.progress.connect(self.task_progress)
         self.task.signals.finished.connect(self.inspection_finished)
         self.task.signals.failed.connect(self.inspection_failed)
         self.set_busy(True)
@@ -553,6 +562,7 @@ class RepositoriesDialog(QDialog):
         QThreadPool.globalInstance().start(self.task)
 
     def set_busy(self, busy: bool) -> None:
+        self.busy_bar.setVisible(busy)
         self.build_combo.setEnabled(not busy)
         self.choose_build_button.setEnabled(not busy)
         self.release_channel.setEnabled(not busy)
@@ -810,15 +820,20 @@ class RepositoriesDialog(QDialog):
         def operation(cancel: Event, progress: Progress) -> TaskResult:
             return TaskResult(
                 "No icon found. Choose an image to replace the current icon.",
-                icons=discover_icons(app, cancel),
+                icons=discover_icons(app, cancel, lambda text: progress(text, 0, 0)),
             )
 
         self.task = Task(operation)
+        self.task.signals.progress.connect(self.task_progress)
         self.task.signals.finished.connect(self.icons_finished)
         self.task.signals.failed.connect(self.icons_failed)
         self.set_busy(True)
         self.status.setText(f"Looking for icons for {app.name}…")
         QThreadPool.globalInstance().start(self.task)
+
+    def task_progress(self, message: str, received: object, total: object) -> None:
+        if self.task is not None and message and not self.closing:
+            self.status.setText(message)
 
     def icons_finished(self, result: TaskResult) -> None:
         self.task = None
@@ -854,7 +869,7 @@ class RepositoriesDialog(QDialog):
             self.closing = True
             self.task.cancel.set()
             self.buttons.setEnabled(False)
-            self.status.setText("Cancelling inspection…")
+            self.status.setText("Stopping… one moment.")
             return
         super().reject()
 

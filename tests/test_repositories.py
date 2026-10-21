@@ -904,12 +904,83 @@ class RepositoryGuiTests(unittest.TestCase):
         self.assertFalse(self.dialog.isVisible())
         self.assertEqual(self.library.apps, APPS)
 
+    def test_a_slow_icon_search_shows_a_moving_bar_and_live_messages(self):
+        self.library.add_repository(CUSTOM)
+        self.dialog.refresh_list()
+        self.select_custom()
+        self.assertTrue(self.dialog.busy_bar.isHidden())
+        proceed = Event()
+
+        def lookup(app, cancel, progress=None):
+            progress("Looking through LightCraft Classic's folders… 7 pages so far")
+            proceed.wait(5)
+            progress("Checking the possible icons…")
+            return ()
+
+        with patch("appglider.repositories_dialog.discover_icons", side_effect=lookup):
+            self.dialog.find_existing_icons()
+            deadline = time.monotonic() + 3
+            while "7 pages so far" not in self.dialog.status.text() and time.monotonic() < deadline:
+                QTest.qWait(10)
+            self.assertTrue(self.dialog.busy_bar.isVisibleTo(self.dialog))
+            self.assertEqual(self.dialog.busy_bar.maximum(), 0)  # "moving", time unknown
+            self.assertIn("7 pages so far", self.dialog.status.text())
+            proceed.set()
+            self.wait_for_task(self.dialog)
+        self.assertTrue(self.dialog.busy_bar.isHidden())
+        self.assertIn("No icon found", self.dialog.status.text())
+
+    def test_stopping_a_search_says_so_and_late_messages_do_not_hide_it(self):
+        self.library.add_repository(CUSTOM)
+        self.dialog.refresh_list()
+        self.select_custom()
+        release = Event()
+
+        def lookup(app, cancel, progress=None):
+            release.wait(5)
+            progress("Looking through folders… 9 pages so far")  # arrives after the stop
+            check_cancel(cancel)
+            return ()
+
+        with patch("appglider.repositories_dialog.discover_icons", side_effect=lookup):
+            self.dialog.find_existing_icons()
+            self.dialog.reject()
+            self.assertEqual(self.dialog.status.text(), "Stopping… one moment.")
+            release.set()
+            self.wait_for_task(self.dialog)
+
+    def test_the_inspection_flow_also_reports_icon_search_progress(self):
+        self.dialog.start_add_repository()
+        self.dialog.url.setText(CUSTOM.source_url)
+        self.dialog.name.setText(CUSTOM.name)
+        proceed, shown = Event(), []
+
+        def lookup(app, cancel, progress=None):
+            progress("Looking through folders… 3 pages so far")
+            proceed.wait(5)
+            return ()
+
+        with (
+            patch("appglider.repositories_dialog.latest_release", return_value=custom_release()),
+            patch("appglider.repositories_dialog.discover_icons", side_effect=lookup),
+        ):
+            QTest.mouseClick(self.dialog.inspect_button, Qt.MouseButton.LeftButton)
+            deadline = time.monotonic() + 3
+            while "3 pages so far" not in self.dialog.status.text() and time.monotonic() < deadline:
+                QTest.qWait(10)
+            shown.append(self.dialog.status.text())
+            self.assertTrue(self.dialog.busy_bar.isVisibleTo(self.dialog))
+            proceed.set()
+            self.wait_for_task(self.dialog)
+        self.assertIn("3 pages so far", shown[0])
+        self.assertTrue(self.dialog.busy_bar.isHidden())
+
     def test_close_cancels_icon_lookup_for_an_existing_repository(self):
         self.library.add_repository(CUSTOM)
         self.dialog.refresh_list()
         self.select_custom()
 
-        def lookup(app, cancel):
+        def lookup(app, cancel, progress=None):
             cancel.wait(timeout=1)
             check_cancel(cancel)
             return ()

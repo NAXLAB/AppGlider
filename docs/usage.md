@@ -147,7 +147,10 @@ changes until you choose.
 
 AppGlider looks for an icon in the project's repository when you add it. This normally takes
 a second or two. If GitHub's request allowance is low it browses the project's web pages
-instead, which uses none of the allowance but can take around twenty seconds. You can pick one
+instead, which uses none of the allowance and usually takes 5 to 10 seconds (up to about 20 for
+some big projects). While it works you will see a moving bar and a message such as "Looking
+through OrcaSlicer's folders… 7 pages so far", so you can tell it has not stopped. To stop it,
+close the window. You can pick one
 of the candidates it finds, or **Choose icon…** to use your own PNG or SVG file. To change
 an app's icon later, open **Settings → Applications → Repositories…**, select the app and
 use **Find icons** or **Choose icon…**. Icons are saved on your computer and work offline.

@@ -5,6 +5,7 @@ import json
 import re
 import time
 import xml.etree.ElementTree as ET
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from threading import Event
@@ -108,6 +109,7 @@ def normalise_icon(data: bytes) -> bytes:
 MAX_LISTINGS = 40
 WALK_SECONDS = 60
 LISTING_PAUSE = 0.1
+EXTRA_PAGES = 6  # after a strong candidate appears, look at this many more pages (at least)
 
 # Folder words, matched as whole words, that suggest artwork; and ones that never do.
 ICON_WORDS = {
@@ -193,18 +195,38 @@ def api_files(app: App, cancel: Event) -> dict[str, int | None] | None:
     return files
 
 
-def web_files(app: App, cancel: Event) -> tuple[dict[str, int | None], str]:
+def is_strong(path: str, slug: str) -> bool:
+    """A file very likely to be the app's own icon: named after the project, or in hicolor."""
+    name = PurePosixPath(path)
+    if name.suffix.lower() not in {".png", ".svg"}:
+        return False
+    if any(word in VARIANT_WORDS for word in words(name.stem)):
+        return False
+    stem = re.sub(r"[^a-z0-9]", "", name.stem.lower())
+    return (len(slug) >= 4 and slug in stem) or "hicolor" in path.lower()
+
+
+def web_files(
+    app: App, cancel: Event, notify: Callable[[int], None] | None = None
+) -> tuple[dict[str, int | None], str]:
     """Find files by browsing the repository's web folders, without any API request.
 
     Every top-level and second-level folder is opened; deeper ones only when their path
     looks like artwork, most promising first. The walk is capped in pages and in time.
-    Also returns the repository's current name, which differs from the saved one if it moved.
+    It stops early: once a strong candidate has been seen on page N, it opens a few more pages
+    (at least six, or N again) in case a better sibling exists, then finishes. `notify` is told
+    how many pages have been opened. Also returns the repository's current name, which differs
+    from the saved one if it moved.
     """
     repo = app.repo
+    slug = re.sub(r"[^a-z0-9]", "", app.repo.split("/")[1].lower())
+    strong_at: int | None = None
     files: dict[str, int | None] = {}
     queue: list[tuple[str, int]] = [("", 0)]
     started, opened = time.monotonic(), 0
     while queue and opened < MAX_LISTINGS and time.monotonic() - started < WALK_SECONDS:
+        if strong_at is not None and opened >= strong_at + max(EXTRA_PAGES, strong_at):
+            break
         check_cancel(cancel)
         queue.sort(key=lambda entry: (-folder_priority(entry[0]), entry[1]))
         path, depth = queue.pop(0)
@@ -215,6 +237,8 @@ def web_files(app: App, cancel: Event) -> tuple[dict[str, int | None], str]:
                 return files, repo  # the very first page failed: nothing to learn here
             continue
         opened += 1
+        if notify is not None:
+            notify(opened)
         sizes = [
             (int(match.group(1)), item["name"])
             for item in items
@@ -224,6 +248,8 @@ def web_files(app: App, cancel: Event) -> tuple[dict[str, int | None], str]:
         for item in items:
             if item["contentType"] == "file":
                 files[item["path"]] = None
+                if strong_at is None and is_strong(item["path"], slug):
+                    strong_at = opened
             elif (
                 depth < 8
                 and worth_opening(item["path"], depth)
@@ -234,19 +260,32 @@ def web_files(app: App, cancel: Event) -> tuple[dict[str, int | None], str]:
     return files, repo
 
 
-def discover_icons(app: App, cancel: Event) -> tuple[IconCandidate, ...]:
+def discover_icons(
+    app: App, cancel: Event, progress: Callable[[str], None] | None = None
+) -> tuple[IconCandidate, ...]:
     """Offer up to four icon candidates found in the repository.
 
     With plenty of GitHub API allowance left, one API request lists the files. Otherwise (low
     allowance, rate limited, or a repository too big for that listing) the files are found by
     browsing the repository's web pages. Either way the images themselves are read from
-    raw.githubusercontent.com, which costs no API requests.
+    raw.githubusercontent.com, which costs no API requests. `progress` receives short status
+    messages for the user, so a slow search does not look like a hang.
     """
     check_cancel(cancel)
+    say = progress or (lambda text: None)
     repo = app.repo
-    files = None if github_status.quota_low() else api_files(app, cancel)
+    files = None
+    if not github_status.quota_low():
+        say(f"Reading {app.name}'s file list…")
+        files = api_files(app, cancel)
     if files is None:
-        files, repo = web_files(app, cancel)
+        say(f"Looking through {app.name}'s folders… (large projects can take up to half a minute)")
+        files, repo = web_files(
+            app,
+            cancel,
+            lambda pages: say(f"Looking through {app.name}'s folders… {pages} pages so far"),
+        )
+    say("Checking the possible icons…")
 
     def read_file(path: str) -> bytes:
         return releases.raw_bytes(repo, path, MAX_ICON_BYTES, cancel)

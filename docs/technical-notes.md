@@ -165,8 +165,12 @@ GitHub changes that page or no checksum can be found, AppGlider stops and explai
 - The web walk opens every top-level and second-level folder, then deeper folders only when
   their path looks like artwork (whole words such as `icons`, `brand`, `assets`, `hicolor`,
   `packaging`), most promising first. It skips dependency, test, documentation and
-  platform-specific folders, looks at only the two largest sizes inside `hicolor`-style
-  folders, and stops after 40 pages or 60 seconds. Expect about 15 to 25 seconds.
+  platform-specific folders, and looks at only the two largest sizes inside `hicolor`-style
+  folders. It stops early: once a strong candidate (a file named after the project, or one in
+  a `hicolor` folder) has been seen on page N, it opens at least six more pages (or N more,
+  if that is larger) and then finishes. Otherwise it stops after 40 pages or 60 seconds.
+  Typically that is 5 to 10 seconds; a project whose icons sit deep in its source tree can
+  take up to about 20 seconds.
   GitHub's folder JSON is an undocumented part of its website, so if it ever changes the walk
   simply finds nothing and you can still choose an image yourself.
 - A PNG or SVG is a candidate if its path contains `icon`, `logo` or `brand/`, if it is the

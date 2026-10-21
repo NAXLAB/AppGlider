@@ -21,6 +21,7 @@ from appglider.icons import (
     MAX_ICON_BYTES,
     discover_icons,
     icon_pixmap,
+    is_strong,
     normalise_icon,
     web_files,
 )
@@ -367,7 +368,7 @@ class IconTests(unittest.TestCase):
                 for name in tree.get(path, [])
             ], repo
 
-        files, opened = self.walk(listing)
+        files, opened = self.walk(listing, EXTRA_PAGES=1000)  # no early stop here
         self.assertNotIn("3rdParty", opened)
         self.assertNotIn("docs", opened)
         self.assertNotIn("src/3rdParty", opened)
@@ -382,6 +383,75 @@ class IconTests(unittest.TestCase):
         self.assertIn("src/Gui/Icons/app.svg", files)
         self.assertTrue(all(size is None for size in files.values()))
         self.assertEqual(opened[0], "")
+
+    def endless_with_strong_file_on(self, page):
+        """Every folder holds three more folders; the project-named icon shows up on `page`."""
+        opened = []
+
+        def listing(repo, path, cancel):
+            opened.append(path)
+            names = ("assets", "icons", "images")  # artwork-like, so the walk keeps going
+            items = [
+                {"name": n, "path": f"{path}/{n}".lstrip("/"), "contentType": "directory"}
+                for n in names
+            ]
+            if len(opened) == page:
+                items.append(
+                    {"name": "ExampleApp.png", "path": "ExampleApp.png", "contentType": "file"}
+                )
+            return items, repo
+
+        return listing
+
+    def test_the_walk_stops_a_little_after_the_first_strong_candidate(self):
+        for page, total in ((2, 8), (4, 10), (12, 24)):  # page + max(6, page)
+            with self.subTest(page=page):
+                files, opened = self.walk(self.endless_with_strong_file_on(page))
+                self.assertEqual(len(opened), total)
+                self.assertIn("ExampleApp.png", files)
+        _, opened = self.walk(self.endless_with_strong_file_on(99))  # none: the page cap applies
+        self.assertEqual(len(opened), 40)
+
+    def test_what_counts_as_a_strong_candidate(self):
+        for path, strong in (
+            ("res/ExampleApp.png", True),
+            ("res/example_app_128px.svg", True),
+            ("assets/hicolor/512x512/apps/whatever.png", True),
+            ("res/ExampleApp-mac_128px.png", False),
+            ("res/ExampleApp_about.svg", False),
+            ("res/ExampleApp.ico", False),
+            ("res/other.png", False),
+        ):
+            with self.subTest(path=path):
+                self.assertEqual(is_strong(path, "exampleapp"), strong)
+        self.assertFalse(is_strong("res/app.png", "app"))  # names under four letters never match
+        self.assertTrue(is_strong("x/hicolor/app.png", "app"))
+
+    def test_the_search_reports_what_it_is_doing_so_a_slow_one_does_not_look_frozen(self):
+        messages = []
+        with (
+            patch("appglider.icons.read_metadata", side_effect=RateLimited("api.github.com", 1)),
+            patch(
+                "appglider.icons.releases.web_listing",
+                side_effect=self.endless_with_strong_file_on(2),
+            ),
+            patch("appglider.icons.releases.raw_bytes", return_value=SVG),
+            patch("appglider.icons.github_status.quota_low", return_value=False),
+            patch("appglider.icons.LISTING_PAUSE", 0),
+        ):
+            discover_icons(CUSTOM, Event(), messages.append)
+        self.assertEqual(messages[0], "Reading Example App's file list…")
+        self.assertIn("up to half a minute", messages[1])
+        pages = [m for m in messages if "pages so far" in m]
+        self.assertEqual(
+            pages, [f"Looking through Example App's folders… {n} pages so far" for n in range(1, 9)]
+        )
+        self.assertEqual(messages[-1], "Checking the possible icons…")
+        with (
+            patch("appglider.icons.github_status.quota_low", return_value=True),
+            patch("appglider.icons.releases.web_listing", return_value=([], "owner/example-app")),
+        ):
+            discover_icons(CUSTOM, Event())  # progress is optional
 
     def test_the_walk_is_capped_in_pages_and_time_and_survives_page_failures(self):
         def endless(repo, path, cancel):
