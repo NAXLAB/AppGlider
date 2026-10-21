@@ -56,7 +56,8 @@ To prepare a release:
 The tag must exactly match `v` plus the project version; a mismatch stops the build.
 After all checks pass, the release job downloads the tested artifact, verifies its checksum
 and creates a draft on the repository's **Releases** page. The draft contains the AppImage,
-`SHA256SUMS.txt` and generated release notes. No additional personal access token is required;
+`SHA256SUMS.txt`, the example catalog `artcraft.toml` (copied from `docs/catalogs/`) and
+generated release notes. No additional personal access token is required;
 the job uses GitHub's workflow token.
 
 Test the AppImage on a real desktop, review the draft's notes, then choose **Publish release**.
