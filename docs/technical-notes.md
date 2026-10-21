@@ -27,6 +27,16 @@ who want to know exactly what AppGlider does with their system, and for contribu
   just to look at it or to check for updates.
 - Results less than five minutes old are reused; older results are refreshed. **Refresh
   releases** and the details' **Check releases** ignore that window.
+- **Cheap checks.** For a stable-only app whose release information is already saved,
+  background, startup, scheduled and **Refresh releases** checks first send a `HEAD` request
+  to `github.com/<owner>/<repo>/releases/latest`. GitHub answers with a redirect to the
+  tag of its designated latest stable release, which AppGlider reads without following it.
+  If that version equals the saved one, the saved information is reused and only its
+  "checked" time is updated, with no API request. If the tag differs, the page gives no
+  clear answer (no release, a renamed repository, an unreadable tag, a network error, HTTP
+  429), or the app has previews turned on, AppGlider goes on to the API exactly as before. The
+  details dialog's **Check releases**, installing and adding a repository always do a full
+  check. The footer reports this source as "GitHub release page".
 - Checked information is kept across restarts and shown first, so a card can show what was
   known before the new check finishes. Cards show when the information was checked and
   whether a refresh failed. A failed check keeps the last known versions and badges.
@@ -44,14 +54,17 @@ who want to know exactly what AppGlider does with their system, and for contribu
 AppGlider needs no GitHub account or token. It uses GitHub's public API, which allows
 60 requests per hour per network address without signing in.
 
-- The API normally takes two metadata requests per repository (the latest stable release
-  and a listing of recent releases). Checksums can need more.
+- A full API check takes two metadata requests per repository (the latest stable release
+  and a listing of recent releases). Checksums can need more. Cheap checks (above) avoid
+  these for apps that have not changed.
 - Answers are stored with their ETag, so repeat requests are conditional and an unchanged
   answer (HTTP 304) is reused. For anonymous requests a 304 still counts against the
   allowance, so a check costs about one request per installed app whether or not anything
   changed.
 - A scheduled check is skipped while GitHub last reported fewer than 30 requests left,
-  while a download or another check is running, and when nothing is installed.
+  while a download or another check is running, and when nothing is installed. Apps with
+  previews turned on cannot use the cheap check yet, so they still cost about two API
+  requests per check.
 - When the allowance runs out, AppGlider falls back to GitHub's public release pages for
   up to three pages of ten releases, applying the same selection rules.
 - The **GitHub** indicator beside the version button opens **Settings → Applications**,

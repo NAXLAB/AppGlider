@@ -206,6 +206,36 @@ class LibraryTests(unittest.TestCase):
             self.assertTrue(QImage(str(icon)).hasAlphaChannel())
             self.assertEqual(QImage(str(icon)).pixelColor(0, 0).alpha(), 0)
 
+    def test_background_checks_are_cheap_and_explicit_details_checks_are_full(self) -> None:
+        with patch("appglider.window.discover_releases", return_value=object()) as discover:
+            for force in (False, True):
+                operation = self.window.release_operation(APP, force)
+                operation(Event(), lambda *args: None)
+                self.assertEqual(discover.call_args.kwargs["cheap"], True)
+                self.assertEqual(discover.call_args.kwargs["force"], force)
+
+    def test_the_details_check_is_a_full_check(self) -> None:
+        calls: list[dict[str, object]] = []
+
+        def discover(*args: object, **kwargs: object) -> object:
+            calls.append(kwargs)
+            return self.release_info()
+
+        def click_check() -> None:
+            dialog = self.qt.activeModalWidget()
+            if isinstance(dialog, DetailsDialog):
+                dialog.check_button.click()
+                dialog.reject()
+
+        with patch("appglider.window.discover_releases", side_effect=discover):
+            QTimer.singleShot(0, click_check)
+            self.window.open_details(APP.id)
+            QTest.qWait(10)
+            self.wait_for_task()
+        self.assertEqual(len(calls), 1)
+        self.assertTrue(calls[0]["force"])
+        self.assertFalse(calls[0].get("cheap", False))
+
     def test_update_check_interval_defaults_to_six_hours_and_saves(self) -> None:
         self.assertEqual(self.window.update_timer.interval(), 6 * 3600 * 1000)
         self.assertTrue(self.window.update_timer.isActive())
@@ -231,7 +261,7 @@ class LibraryTests(unittest.TestCase):
         self.assertEqual(
             seen[0],
             (
-                ["Every 3 hours", "Every 6 hours", "Every 12 hours", "Every 24 hours",
+                ["Every hour", "Every 3 hours", "Every 6 hours", "Every 12 hours", "Every 24 hours",
                  "Only when I choose"],
                 6,
             ),

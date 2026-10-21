@@ -107,6 +107,7 @@ THEMES: dict[str, tuple[str, ...]] = {
     "Sandstone": ("#2b2923", "#35332b", "#f7f4e9", "#c9c2ac", "#4a463a", "#d6b567"),
 }
 CHECK_INTERVALS = (
+    ("Every hour", 1),
     ("Every 3 hours", 3),
     ("Every 6 hours", 6),
     ("Every 12 hours", 12),
@@ -637,8 +638,9 @@ class SettingsDialog(QDialog):
         updates_layout.addLayout(updates_form)
         updates_note = QLabel(
             "Checks the apps you have installed while AppGlider is running, including in the "
-            "tray. Each check uses about one GitHub request per installed app, and is skipped "
-            "when few requests remain."
+            "tray. Checking an app that has not changed does not use GitHub's request allowance "
+            "(apps with previews turned on still use some), and checks are skipped when few "
+            "requests remain."
         )
         updates_note.setObjectName("muted")
         updates_note.setWordWrap(True)
@@ -1433,7 +1435,7 @@ class LauncherWindow(QMainWindow):
     def release_operation(self, app: App, force: bool) -> Callable[[Event, Progress], TaskResult]:
         def operation(cancel: Event, progress: Progress) -> TaskResult:
             info = discover_releases(
-                app, cancel, self.library.data_dir / "release-cache", force=force
+                app, cancel, self.library.data_dir / "release-cache", force=force, cheap=True
             )
             return TaskResult("Release checked.", release_infos={app.id: info})
 

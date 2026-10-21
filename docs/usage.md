@@ -82,17 +82,21 @@ AppGlider also checks by itself:
 
 - when it starts, and
 - on a schedule while it is running, including while it sits in the tray. Choose how often
-  under **Settings → General → Check for updates**: every 3, 6 (the default), 12 or 24
+  under **Settings → General → Check for updates**: every hour, 3, 6 (the default), 12 or 24
   hours, or **Only when I choose** if you would rather do it yourself.
 
 Checks only happen while AppGlider is running. When at least one update is waiting, the
 tray icon gets an amber badge with an up arrow, and its tooltip says how many ("AppGlider ·
 Updates: 2").
 
-GitHub lets programs make about 60 anonymous requests an hour, and each check uses roughly
-one request per installed app. AppGlider skips scheduled checks when GitHub says few
-requests are left. The **GitHub** label at the bottom of the window shows how many remain.
-No GitHub account or token is needed.
+GitHub lets programs make about 60 anonymous requests an hour. AppGlider is careful with
+them: to find out whether an app you have installed has a newer version, it first looks at
+the app's ordinary GitHub release page, which does not use up that allowance. It only uses
+the allowance when a new version has really appeared, or when you install, add or inspect an
+app. The exception is apps that have previews turned on, which still use some requests on
+every check. AppGlider skips scheduled checks when GitHub says few requests are left. The
+**GitHub** label at the bottom of the window shows how many remain. No GitHub account or
+token is needed.
 
 **Roll back.** AppGlider normally keeps the previous version of each app. If a new version
 misbehaves, use **⋯ → Roll back to previous version**. A download that fails or is

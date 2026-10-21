@@ -140,6 +140,15 @@ class GitHubRedirect(HTTPRedirectHandler):
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
+class NoRedirect(HTTPRedirectHandler):
+    """Report a redirect instead of following it, so its destination can be read."""
+
+    def redirect_request(
+        self, req: Request, fp: IO[bytes], code: int, msg: str, headers: HTTPMessage, newurl: str
+    ) -> Request | None:
+        return None
+
+
 class RateLimited(ValueError):
     def __init__(self, host: str, retry_at: float) -> None:
         self.host = host
@@ -234,6 +243,42 @@ def _open(req: Request, host: str) -> Any:
             error.close()
             raise MissingResource("No published release was found in this repository.") from error
         raise
+
+
+def redirect_location(url: str) -> str | None:
+    """Where a github.com page redirects to, or None; never counts against the API allowance."""
+    if not valid_url(url) or urlsplit(url).netloc != "github.com":
+        return None
+    req = Request(url, headers={"User-Agent": f"AppGlider/{APP_VERSION}"}, method="HEAD")
+    try:
+        build_opener(NoRedirect()).open(req, timeout=10).close()
+    except HTTPError as error:
+        location = error.headers.get("Location", "") if error.code in (301, 302, 303) else ""
+        error.close()
+        return location or None
+    except (URLError, OSError, HTTPException, ValueError):
+        return None
+    return None
+
+
+def latest_tag(repo: str, cancel: Event) -> str | None:
+    """The tag GitHub's "Latest" release page points to, read without using the API.
+
+    Returns None whenever the answer is not clearly a release tag of this repository, so
+    callers fall back to the API.
+    """
+    check_cancel(cancel)
+    location = redirect_location(f"https://github.com/{repo}/releases/latest")
+    if not location:
+        return None
+    parsed = urlsplit(location)
+    if parsed.scheme not in ("", "https") or parsed.netloc not in ("", "github.com"):
+        return None
+    prefix = f"/{repo}/releases/tag/".casefold()
+    if not parsed.path.casefold().startswith(prefix):
+        return None
+    tag = unquote(parsed.path[len(prefix) :])
+    return tag if release_version(tag) is not None else None
 
 
 def _etag_entries() -> dict[str, Any]:

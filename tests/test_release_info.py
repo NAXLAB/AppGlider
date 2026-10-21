@@ -1,19 +1,22 @@
 """Catalog discovery is independent of preferences and keeps safe offline information."""
 
+import io
 import json
 import tempfile
 import time
 import unittest
 from dataclasses import replace
+from email.message import Message
 from pathlib import Path
 from threading import Event
 from unittest.mock import patch
+from urllib.error import HTTPError, URLError
 
 from test_library import APP
 from test_prereleases import metadata, release_list_html
 from test_releases import Response, public_assets
 
-from appglider import releases
+from appglider import github_status, releases
 from appglider.release_info import cached_info, discover_releases, info_path, remember_release
 
 
@@ -195,3 +198,167 @@ class ReleaseInfoTests(unittest.TestCase):
         self.assertEqual(updated.preview, info.preview)
         self.assertEqual(updated.checked_at, info.checked_at)
         self.assertEqual(cached_info(APP, self.cache), updated)
+
+    def cheap(self, tag, **options):
+        with (
+            patch.object(releases, "latest_tag", return_value=tag) as latest,
+            patch.object(releases, "api_entries", return_value=self.entries) as api,
+        ):
+            info = discover_releases(
+                options.pop("app", APP), Event(), self.cache, force=True, cheap=True
+            )
+        return info, latest, api
+
+    def test_cheap_check_reuses_saved_information_when_the_latest_tag_is_unchanged(self):
+        first = self.discover()
+        time.sleep(0.01)
+        info, latest, api = self.cheap("v1.2.3")
+        api.assert_not_called()
+        latest.assert_called_once_with(APP.repo, unittest.mock.ANY)
+        self.assertEqual(
+            (info.stable, info.preview, info.newer_stable),
+            (first.stable, first.preview, first.newer_stable),
+        )
+        self.assertGreater(info.checked_at, first.checked_at)
+        self.assertEqual(cached_info(APP, self.cache), info)
+        self.assertEqual(github_status._status.source, "GitHub release page")
+        self.assertEqual(github_status._status.repo, APP.repo)
+
+    def test_cheap_check_asks_the_api_when_the_tag_changed_or_the_answer_is_unclear(self):
+        self.discover()
+        for tag in ("v1.3.0", None):
+            with self.subTest(tag=tag):
+                self.entries = [{**metadata("1.3.0"), "is_latest": True}]
+                info, _, api = self.cheap(tag)
+                api.assert_called_once()
+                self.assertEqual(info.stable.version, "1.3.0")
+        self.entries = [self.beta, self.stable]
+        self.discover()  # back to 1.2.3 for the checks below
+
+    def test_cheap_check_is_skipped_without_saved_information_for_previews_or_when_not_asked(self):
+        info, latest, api = self.cheap("v1.2.3")  # nothing saved yet
+        latest.assert_not_called()
+        api.assert_called_once()
+        with (
+            patch.object(releases, "latest_tag", return_value="v1.2.3") as latest,
+            patch.object(releases, "api_entries", return_value=self.entries) as api,
+        ):
+            discover_releases(
+                replace(APP, include_prereleases=True), Event(), self.cache, force=True, cheap=True
+            )
+            latest.assert_not_called()
+            api.assert_called_once()
+            api.reset_mock()
+            discover_releases(APP, Event(), self.cache, force=True)  # not asked to be cheap
+            latest.assert_not_called()
+            api.assert_called_once()
+
+    def test_a_fresh_cache_needs_no_request_at_all_even_when_cheap(self):
+        self.discover()
+        with (
+            patch.object(releases, "latest_tag") as latest,
+            patch.object(releases, "api_entries") as api,
+        ):
+            discover_releases(APP, Event(), self.cache, cheap=True)
+        latest.assert_not_called()
+        api.assert_not_called()
+
+
+class LatestTagTests(unittest.TestCase):
+    def tag(self, location, repo="owner/repo"):
+        with patch.object(releases, "redirect_location", return_value=location):
+            return releases.latest_tag(repo, Event())
+
+    def test_tags_are_read_from_the_redirect_of_this_repository(self):
+        base = "https://github.com/Owner/Repo/releases/tag/"
+        self.assertEqual(self.tag(base + "v1.2.3"), "v1.2.3")
+        self.assertEqual(self.tag("/owner/repo/releases/tag/v0.6"), "v0.6")
+        self.assertEqual(self.tag(base + "app%2Fv1.2.3"), "app/v1.2.3")
+        self.assertEqual(self.tag(base + "studio-v0.6.0"), "studio-v0.6.0")
+
+    def test_anything_else_is_unknown_so_callers_fall_back_to_the_api(self):
+        for location in (
+            None,
+            "",
+            "https://github.com/owner/repo/releases",
+            "https://github.com/owner/repo",
+            "https://github.com/other/renamed/releases/tag/v1.0.0",
+            "https://evil.example/owner/repo/releases/tag/v1.0.0",
+            "http://github.com/owner/repo/releases/tag/v1.0.0",
+            "https://github.com/owner/repo/releases/tag/nightly",
+            "https://github.com/owner/repo/releases/tag/",
+        ):
+            with self.subTest(location=location):
+                self.assertIsNone(self.tag(location))
+
+    def test_cancellation_is_honoured_before_any_request(self):
+        cancel = Event()
+        cancel.set()
+        with (
+            patch.object(releases, "redirect_location") as read,
+            self.assertRaises(releases.Cancelled),
+        ):
+            releases.latest_tag("owner/repo", cancel)
+        read.assert_not_called()
+
+    def opener(self, *, error=None, response=None):
+        class Opener:
+            def open(self, request, timeout):
+                self.request, self.timeout = request, timeout
+                if error is not None:
+                    raise error
+                return response or io.BytesIO()
+
+        opener = Opener()
+        return opener, patch.object(releases, "build_opener", return_value=opener)
+
+    def http(self, code, location=""):
+        headers = Message()
+        if location:
+            headers["Location"] = location
+        return HTTPError(
+            "https://github.com/owner/repo/releases/latest", code, "x", headers, io.BytesIO()
+        )
+
+    def test_redirect_location_reports_a_redirect_without_following_it(self):
+        url = "https://github.com/owner/repo/releases/latest"
+        opener, patched = self.opener(error=self.http(302, "/owner/repo/releases/tag/v1.0.0"))
+        with patched:
+            self.assertEqual(releases.redirect_location(url), "/owner/repo/releases/tag/v1.0.0")
+        self.assertEqual(opener.request.get_method(), "HEAD")
+        self.assertEqual(opener.timeout, 10)
+        self.assertTrue(opener.request.get_header("User-agent").startswith("AppGlider/"))
+
+    def test_redirect_location_is_none_for_other_answers_and_failures(self):
+        url = "https://github.com/owner/repo/releases/latest"
+        for outcome in (
+            {"error": self.http(404)},
+            {"error": self.http(429)},
+            {"error": self.http(302)},  # no Location header
+            {"error": self.http(500, "/x")},
+            {"error": URLError("offline")},
+            {"error": TimeoutError()},
+            {"response": io.BytesIO(b"a normal page")},
+        ):
+            with self.subTest(outcome=list(outcome)), self.opener(**outcome)[1]:
+                self.assertIsNone(releases.redirect_location(url))
+        for other in (
+            "https://api.github.com/repos/owner/repo/releases/latest",
+            "https://example.com/owner/repo/releases/latest",
+            "http://github.com/owner/repo/releases/latest",
+        ):
+            with self.subTest(url=other), self.opener(error=self.http(302, "/x"))[1]:
+                self.assertIsNone(releases.redirect_location(other))
+
+    def test_the_redirect_handler_never_follows(self):
+        handler = releases.NoRedirect()
+        self.assertIsNone(
+            handler.redirect_request(
+                releases.Request("https://github.com/a/b/releases/latest"),
+                io.BytesIO(),
+                302,
+                "Found",
+                Message(),
+                "https://github.com/a/b/releases/tag/v1",
+            )
+        )

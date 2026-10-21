@@ -178,14 +178,34 @@ def inspect_entries(
     return ReleaseInfo(options[0], options[1], time.time(), options[2], app.build_variant)
 
 
+def unchanged_stable(app: App, cached: ReleaseInfo, cancel: Event) -> bool:
+    """True when GitHub's "Latest" page still points at the stable release we already know."""
+    if app.include_prereleases or cached.stable is None:
+        return False
+    tag = releases.latest_tag(app.repo, cancel)
+    return tag is not None and releases.release_version(tag) == cached.stable.version
+
+
 def discover_releases(
-    app: App, cancel: Event, cache_dir: Path, *, force: bool = False
+    app: App, cancel: Event, cache_dir: Path, *, force: bool = False, cheap: bool = False
 ) -> ReleaseInfo:
+    """Find the releases of an app.
+
+    With `cheap`, a stable-only app whose release information is already saved is checked by
+    reading where GitHub's "Latest" page redirects. That uses no API requests, and the API is
+    asked only when the tag changed or the page gave no clear answer.
+    """
     releases.check_cancel(cancel)
     cached = cached_info(app, cache_dir)
     if not force and cached and cached.fresh():
         github_status.release_result("Cached information", app.repo, cached.checked_at)
         return cached
+    if cheap and cached and unchanged_stable(app, cached, cancel):
+        info = replace(cached, checked_at=time.time())
+        github_status.release_result("GitHub release page", app.repo, info.checked_at)
+        with contextlib.suppress(OSError):
+            atomic_json(info_path(app, cache_dir), asdict(info))
+        return info
     releases.restore_rate_limits(cache_dir)
     app = replace(app, include_prereleases=True)
     try:
