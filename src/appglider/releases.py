@@ -29,6 +29,7 @@ RETRY_DELAYS = (0.5, 1.5)
 RETRY_STATUSES = (500, 502, 503, 504)
 _RETRY_AFTER: dict[str, float] = {}
 ETAG_ENTRIES = 200
+LISTING_PAGE_SIZE = 20
 ETAG_BODY_LIMIT = 512 * 1024
 _ETAG_LOCK = Lock()
 _ETAG_FILE: Path | None = None
@@ -709,8 +710,8 @@ def api_entries(app: App, cancel: Event) -> list[Any]:
     if not app.include_prereleases and stable is not None:
         return [{**stable, "is_latest": True}]
     check_cancel(cancel)
-    # One request at GitHub's maximum page size; older releases are not needed.
-    items = json.loads(read_metadata(f"{prefix}?per_page=100&page=1"))
+    # One request for the newest releases; asset-heavy nightly repositories make full pages huge.
+    items = json.loads(read_metadata(f"{prefix}?per_page={LISTING_PAGE_SIZE}&page=1"))
     if not isinstance(items, list):
         raise ValueError("GitHub returned an invalid release listing.")
     entries: list[Any] = []
