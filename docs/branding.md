@@ -1,33 +1,37 @@
-# AppHarbour
+# AppGlider
 
-AppHarbour is the user-facing name. Its icon depicts three application tiles nested in a
-blue harbour, with teal, blue and coral colours and a transparent background.
+AppGlider is the user-facing name. Its icon is a swept wing of three
+S-curved feathers in three greens (`#8FAE75`, `#5B7F52`, `#3F5E3A`) on a transparent
+background, so it reads on both light and dark desktops and panels. The Forest theme's
+palette is `#1C1F1A`, `#5B7F52`, `#8FAE75`, `#D6D1C4` and `#F4F3EB`. The name replaced
+AppHarbour, which was already in use.
 
-The production source asset is `src/appharbour/assets/icons/appharbour.png`.
-It was generated on 2026-10-19 using the built-in imagegen tool. Qt renders the same PNG at
+Settings > Appearance offers System (the desktop's native colours, the default), Light,
+Dark, Forest, Earthy and Sandstone.
+
+The vector source is `docs/branding/appglider-icon.svg`, drawn in VectorCraft: the top
+feather's curve is copied, rotated and scaled for the other two, with real 12 pt gaps cut
+between them because Qt's SVG renderer ignores masks.
+`src/appglider/assets/icons/appglider.png` is its 1024 px render. Qt renders the same PNG at
 the sizes required by the window, header, desktop shortcut and tray; no extra dependency is
 needed. The application catalog's upstream icons remain separate.
 
-## Generation prompt
-
-> Use case: logo-brand. Asset type: production Linux desktop application icon for AppHarbour, an installer/updater/launcher that gives a collection of AppImages a safe home. Create ONE polished, distinctive square app icon, centered isolated on a genuinely transparent background. Subject: three compact rounded application tiles with subtly different heights, nested in a simple sweeping U-shaped harbour/dock, the combined silhouette hinting at a welcoming harbour and an upward launch. Use a deep indigo/navy dock with a strong cyan/teal rim and three tile faces in teal, blue, and warm coral. Restrained soft dimensional shading, crisp smooth contours, bold simple geometry, friendly modern desktop identity. The tiles must read as application tiles, not buildings, books, or shopping bags. Composition: one unified compact mark occupying about 85% of a square canvas, generous transparent safety margin, balanced front view with only slight depth, robust recognisability at 24px. No letters, no text, no wordmark, no badges, no border, no surrounding scene, no circular background plate, no mockup, no tiny details, no drop shadow beyond the mark. Deliver a single 1024x1024 icon with transparent alpha.
-
 ## Application identity
 
-- Display name and Qt organisation/application IDs: `AppHarbour`.
-- Python module and command: `appharbour`.
-- Library, custom repositories, release cache and icons: `$XDG_DATA_HOME/appharbour/`
-  (normally `~/.local/share/appharbour/`). The release cache holds `etags.json`; the data
-  folder also holds `library.lock` and `appharbour.lock` (single-instance guard, whose
+- Display name and Qt organisation/application IDs: `AppGlider`.
+- Python module and command: `appglider`.
+- Library, custom repositories, release cache and icons: `$XDG_DATA_HOME/appglider/`
+  (normally `~/.local/share/appglider/`). The release cache holds `etags.json`; the data
+  folder also holds `library.lock` and `appglider.lock` (single-instance guard, whose
   wake-up socket lives in `$XDG_RUNTIME_DIR`).
-- Preferences: `~/.config/AppHarbour/AppHarbour.conf`, respecting `XDG_CONFIG_HOME`.
-- Installation ownership marker: `.appharbour`, with `AppHarbour` as its first line.
-- Managed-app shortcuts: `appharbour-<id>.desktop`, marked `X-AppHarbour=true`.
-- Launcher shortcut and Qt desktop-file ID: `appharbour.desktop` / `appharbour`.
+- Preferences: `~/.config/AppGlider/AppGlider.conf`, respecting `XDG_CONFIG_HOME`.
+- Installation ownership marker: `.appglider`, with `AppGlider` as its first line.
+- Managed-app shortcuts: `appglider-<id>.desktop`, marked `X-AppGlider=true`.
+- Launcher shortcut and Qt desktop-file ID: `appglider.desktop` / `appglider`.
 
 ## Tray behaviour
 
-Click restores the window. The context menu opens AppHarbour, checks updates, launches
+Click restores the window. The context menu opens AppGlider, checks updates, launches
 managed installed apps or quits. Closing hides only while a tray is available; otherwise
 normal close behaviour remains. Downloads continue while hidden, and Quit waits for a
 confirmed cancellation to finish before exiting. Autostart and notifications are not added.
