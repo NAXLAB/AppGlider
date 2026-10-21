@@ -123,6 +123,7 @@ SORT_CHOICES = (
     ("Order added", "added"),
 )
 DEFAULT_SORT = "name"
+PIN_COLOUR = "#e6a817"  # gold, readable on both light and dark themes
 MAX_PINNED = 100
 SYSTEM_THEME = "System"
 THEME_CHOICES = [SYSTEM_THEME, *THEMES]
@@ -214,7 +215,16 @@ class AppCard(QFrame):
         name.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         name.setCursor(Qt.CursorShape.PointingHandCursor)
         name.clicked.connect(lambda: self.details_requested.emit(app.id))
-        identity.addWidget(name)
+        name_row = QHBoxLayout()
+        name_row.setSpacing(4)
+        self.pin_star = QLabel("★")
+        self.pin_star.setObjectName("pinStar")
+        self.pin_star.setToolTip("Pinned to the top")
+        self.pin_star.setAccessibleName("Pinned to the top")
+        self.pin_star.hide()
+        name_row.addWidget(self.pin_star)
+        name_row.addWidget(name, stretch=1)
+        identity.addLayout(name_row)
         description = QLabel(app.description)
         description.setTextFormat(Qt.TextFormat.PlainText)
         description.setObjectName("cardDescription")
@@ -296,7 +306,7 @@ class AppCard(QFrame):
         if pinned == self.pinned:
             return
         self.pinned = pinned
-        self.name_button.setText(f"★ {self.app.name}" if pinned else self.app.name)
+        self.pin_star.setVisible(pinned)
         self.name_button.setAccessibleName(
             f"View {self.app.name} details" + (", pinned to the top" if pinned else "")
         )
@@ -1848,6 +1858,7 @@ class LauncherWindow(QMainWindow):
             QPushButton#primary:disabled {{ background: {surface}; color: {muted};
                 border-color: {border}; }}
             QPushButton#danger {{ color: {"#ff9d9d" if dark else "#a52626"}; }}
+            QLabel#pinStar {{ color: {PIN_COLOUR}; font-size: 15px; }}
             QPushButton#appName {{ border: none; padding: 0; text-align: left;
                 font-size: 17px; font-weight: 650; background: transparent; }}
             QPushButton#appName:focus {{ outline: 2px solid {accent}; }}

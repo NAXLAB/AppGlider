@@ -312,8 +312,11 @@ class LibraryTests(unittest.TestCase):
         card.pin_action.trigger()
         self.assertEqual(self.shown()[0], target.id)
         self.assertEqual(card.pin_action.text(), "Unpin")
-        self.assertEqual(card.name_button.text(), f"★ {target.name}")
+        self.assertTrue(card.pin_star.isVisibleTo(card))  # a separate, gold ★ beside the name
+        self.assertEqual(card.pin_star.text(), "★")
+        self.assertEqual(card.name_button.text(), target.name)  # the name itself is unchanged
         self.assertIn("pinned", card.name_button.accessibleName())
+        self.assertIn("QLabel#pinStar { color: #e6a817", self.qt.styleSheet())
         for mode in ("name", "installed", "updates", "added"):
             with self.subTest(mode=mode):
                 self.choose_sort(mode)
@@ -323,6 +326,7 @@ class LibraryTests(unittest.TestCase):
         reopened = QSettings(self.settings.fileName(), QSettings.Format.IniFormat)
         self.assertEqual(pinned_apps(reopened), {target.id})
         card.pin_action.trigger()  # unpin
+        self.assertTrue(card.pin_star.isHidden())
         self.assertEqual(card.name_button.text(), target.name)
         self.assertEqual(card.pin_action.text(), "Pin to top")
         self.assertEqual(window.pinned, set())

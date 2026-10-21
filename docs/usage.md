@@ -41,7 +41,7 @@ previous version, Uninstall and the menu-shortcut repair.
 
 **Sorting and pinning.** The **Sort** box above the cards orders them by name (the default),
 installed apps first, apps with updates first, or the order you added them. **⋯ → Pin to
-top** puts an app at the front whatever the sort (it gets a ★ in front of its name), and
+top** puts an app at the front whatever the sort (it gets a gold ★ beside its name), and
 **Unpin** puts it back. AppGlider remembers both. The tray menu's list of installed apps
 follows the same order.
 
