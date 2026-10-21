@@ -1,0 +1,88 @@
+# AppGlider catalog: a list of GitHub repositories whose AppImages AppGlider can manage.
+# Edit it with any text editor. Importing adds these entries; nothing is installed.
+format = 1
+name = "ArtCraft apps and SolidCraft"
+
+[[app]]
+repo = "storytold/cadcraft"
+name = "CADCraft"
+description = "Computer-aided design and drafting"
+stable_only = true
+
+[[app]]
+repo = "storytold/deckcraft"
+name = "DeckCraft"
+description = "Presentations and slide decks"
+stable_only = true
+
+[[app]]
+repo = "storytold/designcraft"
+name = "DesignCraft"
+description = "Page layout and publishing"
+stable_only = true
+
+[[app]]
+repo = "storytold/effectcraft"
+name = "EffectCraft"
+description = "Motion graphics and visual effects"
+stable_only = true
+
+[[app]]
+repo = "storytold/figcraft"
+name = "FigCraft"
+description = "Interface design and prototyping"
+stable_only = true
+
+[[app]]
+repo = "storytold/filmcraft"
+name = "FilmCraft"
+description = "Video editing, colour and sound"
+stable_only = true
+
+[[app]]
+repo = "storytold/gridcraft"
+name = "GridCraft"
+description = "Spreadsheets and data"
+stable_only = true
+
+[[app]]
+repo = "storytold/lightcraft"
+name = "LightCraft"
+description = "Photo organisation and RAW development"
+stable_only = true
+
+[[app]]
+repo = "storytold/pdfcraft"
+name = "PdfCraft"
+description = "Read, organise and work with PDFs"
+stable_only = true
+
+[[app]]
+repo = "storytold/photocraft"
+name = "PhotoCraft"
+description = "Image editing and photo composition"
+stable_only = true
+
+[[app]]
+repo = "tangency-labs/solidcraft"
+name = "SolidCraft"
+description = "Parametric 3D modelling and CAD"
+stable_only = true
+
+[[app]]
+repo = "storytold/soundcraft"
+name = "SoundCraft"
+description = "Audio recording, editing and mixing"
+stable_only = true
+
+[[app]]
+repo = "storytold/vectorcraft"
+name = "VectorCraft"
+description = "Vector illustration and graphics"
+stable_only = true
+
+[[app]]
+repo = "storytold/wordcraft"
+name = "WordCraft"
+description = "Writing and document design"
+stable_only = true

@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QListWidgetItem,
+    QPlainTextEdit,
     QPushButton,
     QScrollArea,
     QStyledItemDelegate,
@@ -29,6 +30,7 @@ from PySide6.QtWidgets import (
 
 from appglider import APP_ICON
 from appglider.catalog import APPS, App, custom_app
+from appglider.catalogfile import CatalogError, ParsedCatalog, read, render
 from appglider.icons import (
     MAX_ICON_BYTES,
     IconCandidate,
@@ -37,7 +39,7 @@ from appglider.icons import (
     normalise_icon,
 )
 from appglider.jobs import Task, TaskResult
-from appglider.library import Library
+from appglider.library import ImportPlan, Library
 from appglider.release_info import remember_release
 from appglider.releases import (
     Progress,
@@ -46,7 +48,59 @@ from appglider.releases import (
     latest_release,
     variant_label,
 )
+from appglider.storage import atomic_bytes
 from appglider.version_label import VersionLabel
+
+
+class CatalogPreviewDialog(QDialog):
+    """Show what importing a catalog would change, as plain text, before anything is saved."""
+
+    def __init__(self, catalog: ParsedCatalog, plan: ImportPlan, parent: QWidget) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Import catalog")
+        self.resize(640, 480)
+        layout = QVBoxLayout(self)
+        title = catalog.name or "Untitled catalog"
+        summary = QLabel(
+            f"{title}: {len(plan.new)} to add, {len(plan.existing)} already in your library"
+            + (f", {len(catalog.skipped)} skipped." if catalog.skipped else ".")
+        )
+        summary.setTextFormat(Qt.TextFormat.PlainText)
+        summary.setWordWrap(True)
+        layout.addWidget(summary)
+        lines: list[str] = []
+        for entry in plan.new:
+            channel = "stable releases only" if entry.stable_only else "includes previews"
+            lines.append(f"ADD  {entry.name}  ({entry.repo}, {channel})")
+            if entry.description:
+                lines.append(f"       {entry.description}")
+            if entry.build:
+                lines.append(f"       build: {entry.build}")
+        if plan.existing:
+            lines += ["", "ALREADY IN YOUR LIBRARY (left unchanged)"]
+            lines += [f"  {entry.name}  ({entry.repo})" for entry in plan.existing]
+        if catalog.skipped:
+            lines += ["", "SKIPPED (not valid)"] + [f"  {problem}" for problem in catalog.skipped]
+        if catalog.ignored:
+            lines += ["", "IGNORED KEYS (not used by this version)"]
+            lines += [f"  {key}" for key in catalog.ignored]
+        self.details = QPlainTextEdit("\n".join(lines))
+        self.details.setReadOnly(True)
+        self.details.setAccessibleName("Catalog contents")
+        layout.addWidget(self.details, stretch=1)
+        note = QLabel("Nothing is installed. Apps are added to your library only.")
+        note.setObjectName("muted")
+        layout.addWidget(note)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Cancel)
+        self.add_button = buttons.addButton(
+            f"Add {len(plan.new)} {'app' if len(plan.new) == 1 else 'apps'}",
+            QDialogButtonBox.ButtonRole.AcceptRole,
+        )
+        self.add_button.setObjectName("primary")
+        self.add_button.setEnabled(bool(plan.new))
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
 
 
 class RepositoriesDialog(QDialog):
@@ -266,6 +320,14 @@ class RepositoriesDialog(QDialog):
         self.status.setObjectName("muted")
         self.status.setWordWrap(True)
         footer.addWidget(self.status, stretch=1)
+        self.import_button = QPushButton("Import catalog…")
+        self.import_button.setToolTip("Add apps from a plain-text TOML catalog file.")
+        self.import_button.clicked.connect(self.import_catalog)
+        footer.addWidget(self.import_button)
+        self.export_button = QPushButton("Export catalog…")
+        self.export_button.setToolTip("Save your repositories as a plain-text TOML file.")
+        self.export_button.clicked.connect(self.export_catalog)
+        footer.addWidget(self.export_button)
         self.buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
         self.buttons.rejected.connect(self.reject)
         footer.addWidget(self.buttons)
@@ -503,6 +565,8 @@ class RepositoriesDialog(QDialog):
         self.inspect_button.setEnabled(not busy)
         self.inspect_button.setText("Inspecting…" if busy else "Inspect repository")
         self.new_repository_button.setEnabled(not busy and not self.adding)
+        self.import_button.setEnabled(not busy and not self.adding)
+        self.export_button.setEnabled(not busy)
         self.add_button.setVisible(self.adding)
         self.add_button.setEnabled(not busy and self.release is not None)
         self.release_preview.setVisible(self.release is not None)
@@ -665,6 +729,54 @@ class RepositoriesDialog(QDialog):
             if item and item.data(Qt.ItemDataRole.UserRole) == self.icon_target.id:
                 item.setIcon(QIcon(self.icon_preview.pixmap()))
             self.catalog_changed.emit()
+
+    def import_catalog(self) -> None:
+        if self.task is not None or self.adding:
+            return
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Import catalog", "", "AppGlider catalogs (*.toml);;All files (*)"
+        )
+        if not path:
+            return
+        try:
+            catalog = read(Path(path))
+            plan = self.library.plan_import(catalog.entries)
+        except (CatalogError, OSError, ValueError) as error:
+            self.status.setText(f"Cannot import {Path(path).name}: {error}")
+            return
+        preview = CatalogPreviewDialog(catalog, plan, self)
+        accepted = preview.exec() == QDialog.DialogCode.Accepted
+        preview.deleteLater()
+        if not accepted:
+            return
+        try:
+            added = self.library.import_catalog(plan.new)
+        except (OSError, ValueError) as error:
+            self.status.setText(f"Nothing was imported: {error}")
+            return
+        self.refresh_list()
+        self.catalog_changed.emit()
+        count = len(added.new)
+        self.status.setText(
+            f"Added {count} {'app' if count == 1 else 'apps'} from {Path(path).name}. "
+            "Select one and choose Find icons to add its icon."
+        )
+
+    def export_catalog(self) -> None:
+        if self.task is not None:
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export catalog", "appglider-catalog.toml", "AppGlider catalogs (*.toml)"
+        )
+        if not path:
+            return
+        try:
+            entries = self.library.export_entries()
+            atomic_bytes(Path(path), render(entries, "My AppGlider catalog").encode("utf-8"))
+        except (OSError, ValueError) as error:
+            self.status.setText(f"Cannot export the catalog: {error}")
+            return
+        self.status.setText(f"Exported {len(entries)} apps to {Path(path).name}.")
 
     def choose_icon(self) -> None:
         if self.task is not None or self.icon_target is None:

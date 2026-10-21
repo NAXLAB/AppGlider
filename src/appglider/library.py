@@ -11,7 +11,7 @@ import shutil
 import subprocess
 import tempfile
 import time
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from threading import Event
@@ -21,11 +21,13 @@ from appglider.catalog import (
     APPS,
     App,
     custom_app,
+    default_description,
     load_apps,
     load_build_preferences,
     load_release_preferences,
     valid_build_variant,
 )
+from appglider.catalogfile import CatalogEntry, entry_for
 from appglider.icons import MAX_ICON_BYTES, normalise_icon
 from appglider.releases import (
     VERSION,
@@ -43,6 +45,7 @@ FREE_SPACE_MARGIN = 64 * 1024 * 1024
 MAX_LOG_BYTES = 5 * 1024 * 1024
 STALE_STAGE_SECONDS = 24 * 60 * 60
 LOCK_WAIT_SECONDS = 3.0
+MAX_CUSTOM_APPS = 100
 
 
 def desktop_exec(arguments: list[str]) -> str:
@@ -64,6 +67,12 @@ class Orphan:
     app_id: str
     path: str
     version: str
+
+
+@dataclass(frozen=True)
+class ImportPlan:
+    new: tuple[CatalogEntry, ...]
+    existing: tuple[CatalogEntry, ...]
 
 
 @dataclass(frozen=True)
@@ -207,7 +216,9 @@ class Library:
             atomic_bytes(directory / f"{app.id}.png", png)
 
     def add_repository(self, app: App) -> None:
-        if app != custom_app(app.repo, app.name, app.include_prereleases, app.build_variant):
+        if app != custom_app(
+            app.repo, app.name, app.include_prereleases, app.build_variant, app.description
+        ):
             raise ValueError("Invalid custom repository details.")
         with self._lock():
             apps = self.apps
@@ -217,6 +228,47 @@ class Library:
             self._save_release_preference(app.id, app.include_prereleases)
             self._save_build_variant(app.id, app.build_variant)
             self._save_repositories((*apps[len(APPS) :], app))
+
+    def plan_import(self, entries: Sequence[CatalogEntry]) -> ImportPlan:
+        """Say which catalog entries would be added and which are already in the library."""
+        known = {app.repo.casefold() for app in self.apps}
+        new: list[CatalogEntry] = []
+        existing: list[CatalogEntry] = []
+        for entry in entries:
+            if entry.repo.casefold() in known:
+                existing.append(entry)
+            else:
+                known.add(entry.repo.casefold())
+                new.append(entry)
+        return ImportPlan(tuple(new), tuple(existing))
+
+    def import_catalog(self, entries: Sequence[CatalogEntry]) -> ImportPlan:
+        """Add the entries that are not in the library yet; existing apps are left unchanged."""
+        with self._lock():
+            apps = self.apps
+            plan = self.plan_import(entries)
+            custom = apps[len(APPS) :]
+            if len(custom) + len(plan.new) > MAX_CUSTOM_APPS:
+                raise ValueError(
+                    f"The catalog supports up to {MAX_CUSTOM_APPS} custom repositories; "
+                    f"this import would make {len(custom) + len(plan.new)}."
+                )
+            added = tuple(
+                custom_app(
+                    entry.repo, entry.name, not entry.stable_only, entry.build, entry.description
+                )
+                for entry in plan.new
+            )
+            if added:
+                self.records()
+                for app in added:
+                    self._save_release_preference(app.id, app.include_prereleases)
+                    self._save_build_variant(app.id, app.build_variant)
+                self._save_repositories((*custom, *added))
+            return plan
+
+    def export_entries(self) -> tuple[CatalogEntry, ...]:
+        return tuple(entry_for(app) for app in self.apps)
 
     def remove_repository(self, app_id: str) -> None:
         with self._lock():
@@ -239,11 +291,19 @@ class Library:
                     icon.unlink(missing_ok=True)
 
     def _save_repositories(self, apps: tuple[App, ...]) -> None:
-        if len(apps) > 100:
-            raise ValueError("The catalog supports up to 100 custom repositories.")
+        if len(apps) > MAX_CUSTOM_APPS:
+            raise ValueError(f"The catalog supports up to {MAX_CUSTOM_APPS} custom repositories.")
         atomic_json(
             self.data_dir / "repositories.json",
-            [{"repo": app.repo, "name": app.name} for app in apps],
+            [
+                {"repo": app.repo, "name": app.name}
+                | (
+                    {}
+                    if app.description == default_description(app.repo)
+                    else {"description": app.description}
+                )
+                for app in apps
+            ],
         )
 
     def _entries(self) -> dict[str, object]:

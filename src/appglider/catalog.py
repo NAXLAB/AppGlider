@@ -9,6 +9,7 @@ from urllib.parse import urlsplit
 from appglider import APP_ICON
 
 ASSETS = Path(__file__).parent / "assets"
+MAX_DESCRIPTION = 200
 
 
 @dataclass(frozen=True)
@@ -53,11 +54,24 @@ APPS = (
 )
 
 
+def default_description(repo: str) -> str:
+    return f"AppImage from {repo}"
+
+
+def valid_description(value: object) -> bool:
+    return (
+        isinstance(value, str)
+        and 0 < len(value) <= MAX_DESCRIPTION
+        and not any(ord(c) < 32 or ord(c) == 127 for c in value)
+    )
+
+
 def custom_app(
     repository: str,
     name: str | None = None,
     include_prereleases: bool = False,
     build_variant: str = "",
+    description: str = "",
 ) -> App:
     if type(include_prereleases) is not bool:
         raise ValueError("The release preference must be true or false.")
@@ -87,10 +101,12 @@ def custom_app(
     title = name.strip() if name is not None else slug.replace("-", " ").replace("_", " ").title()
     if not title or len(title) > 128 or any(ord(c) < 32 or ord(c) == 127 for c in title):
         raise ValueError("Use an application name of 1–128 characters, without control characters.")
+    if description and not valid_description(description):
+        raise ValueError("Use a description of up to 200 plain characters.")
     return App(
         f"github-{owner}__{slug}",
         title,
-        f"AppImage from {owner}/{slug}",
+        description or default_description(f"{owner}/{slug}"),
         f"{owner}/{slug}",
         slug,
         include_prereleases,
@@ -176,7 +192,10 @@ def _load_apps(path: Path) -> tuple[App, ...]:
                 or not isinstance(item.get("name"), str)
             ):
                 raise ValueError("Invalid repository entry.")
-            app = custom_app(item["repo"], item["name"])
+            description = item.get("description", "")
+            if not isinstance(description, str):
+                raise ValueError("Invalid repository entry.")
+            app = custom_app(item["repo"], item["name"], description=description)
             if any(
                 known.repo.casefold() == app.repo.casefold() or known.id == app.id for known in apps
             ):

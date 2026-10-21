@@ -18,7 +18,7 @@ from gui_helpers import close_window
 from PySide6.QtCore import QSettings, Qt, QTimer
 from PySide6.QtGui import QPalette
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QMessageBox
+from PySide6.QtWidgets import QApplication, QLabel, QMessageBox
 from test_builds import BAMBU, bambu_metadata, chosen_bambu
 from test_library import appimage_bytes
 
@@ -29,7 +29,7 @@ from appglider.jobs import TaskResult
 from appglider.library import Library
 from appglider.release_info import ReleaseInfo, ReleaseOption, discover_releases
 from appglider.releases import Release, architecture, check_cancel, select_release
-from appglider.repositories_dialog import RepositoriesDialog
+from appglider.repositories_dialog import CatalogPreviewDialog, RepositoriesDialog
 from appglider.window import LauncherWindow, SettingsDialog
 
 CUSTOM = custom_app("https://github.com/emmertex/lightcraft-classic", "LightCraft Classic")
@@ -220,6 +220,110 @@ class RepositoryGuiTests(unittest.TestCase):
         self.dialog.show()
         self.qt.processEvents()
         self.addCleanup(self.dialog.close)
+
+    def write_catalog(self, text):
+        path = self.root / "catalog.toml"
+        path.write_text(text)
+        return path
+
+    def run_import(self, path, accept=True):
+        previews = []
+
+        def exec_preview(preview):
+            previews.append(preview)
+            return preview.result() or (1 if accept else 0)
+
+        with (
+            patch(
+                "appglider.repositories_dialog.QFileDialog.getOpenFileName",
+                return_value=(str(path), ""),
+            ),
+            patch.object(CatalogPreviewDialog, "exec", exec_preview),
+        ):
+            self.dialog.import_catalog()
+        return previews
+
+    def test_import_previews_then_adds_and_cancel_adds_nothing(self):
+        path = self.write_catalog(
+            'format = 1\nname = "Tools"\n[[app]]\nrepo = "owner/one"\nname = "One"\n'
+            'description = "First tool"\n[[app]]\nrepo = "https://evil.test/x/y"\n'
+            f'[[app]]\nrepo = "{APPS[0].repo}"\nextra = 1\n'
+        )
+        (preview,) = self.run_import(path, accept=False)
+        text = preview.details.toPlainText()
+        self.assertIn("ADD  One  (owner/one, stable releases only)", text)
+        self.assertIn("First tool", text)
+        self.assertIn("ALREADY IN YOUR LIBRARY", text)
+        self.assertIn("SKIPPED", text)
+        self.assertIn("app 3: extra", text)
+        self.assertTrue(preview.add_button.isEnabled())
+        self.assertEqual(self.library.apps, APPS)
+        self.assertFalse((self.library.data_dir / "repositories.json").exists())
+        self.run_import(path)
+        self.assertEqual([app.repo for app in self.library.apps[len(APPS) :]], ["owner/one"])
+        self.assertIn("Added 1 app", self.dialog.status.text())
+        listed = [
+            self.dialog.repo_list.item(row).text() for row in range(self.dialog.repo_list.count())
+        ]
+        self.assertTrue(any("owner/one" in text for text in listed))
+        self.assertIn("owner/one", {app.repo for app in self.window.apps})
+
+    def test_import_reports_unusable_files_without_changing_the_library(self):
+        for text in ("format = 2", "not toml [", "name = 'no format'"):
+            with self.subTest(text=text):
+                self.assertEqual(self.run_import(self.write_catalog(text)), [])
+                self.assertIn("Cannot import catalog.toml", self.dialog.status.text())
+        self.assertEqual(self.run_import(self.root / "missing.toml"), [])
+        self.assertIn("Cannot import missing.toml", self.dialog.status.text())
+        self.assertEqual(self.library.apps, APPS)
+
+    def test_preview_with_nothing_new_cannot_be_accepted(self):
+        path = self.write_catalog(f'format = 1\n[[app]]\nrepo = "{APPS[0].repo}"\n')
+        (preview,) = self.run_import(path, accept=False)
+        self.assertFalse(preview.add_button.isEnabled())
+
+    def test_export_writes_a_catalog_that_imports_back(self):
+        self.library.add_repository(custom_app("owner/one", "One", True, "One.AppImage"))
+        target = self.root / "out.toml"
+        with patch(
+            "appglider.repositories_dialog.QFileDialog.getSaveFileName",
+            return_value=(str(target), ""),
+        ):
+            self.dialog.export_catalog()
+        self.assertIn(f"Exported {len(APPS) + 1} apps to out.toml", self.dialog.status.text())
+        text = target.read_text()
+        self.assertTrue(text.startswith("# AppGlider catalog"))
+        self.assertIn('repo = "owner/one"', text)
+        self.assertIn("stable_only = false", text)
+        with patch(
+            "appglider.repositories_dialog.QFileDialog.getSaveFileName", return_value=("", "")
+        ):
+            self.dialog.export_catalog()
+        self.assertIn("Exported", self.dialog.status.text())
+        blocked = self.root  # a directory cannot be written as a file
+        with patch(
+            "appglider.repositories_dialog.QFileDialog.getSaveFileName",
+            return_value=(str(blocked), ""),
+        ):
+            self.dialog.export_catalog()
+        self.assertIn("Cannot export", self.dialog.status.text())
+
+    def test_imported_text_is_shown_as_plain_text(self):
+        path = self.write_catalog(
+            'format = 1\n[[app]]\nrepo = "owner/evil"\nname = "<b>Bold</b>"\n'
+            'description = "<a href=\\"http://x.test\\">click</a>"\n'
+        )
+        self.run_import(path)
+        card = self.window.cards["github-owner__evil"]
+        labels = {label.text(): label for label in card.findChildren(QLabel)}
+        label = labels['<a href="http://x.test">click</a>']
+        self.assertEqual(label.textFormat(), Qt.TextFormat.PlainText)
+        self.assertEqual(card.findChild(type(card.action_button), "appName").text(), "<b>Bold</b>")
+
+    def test_import_and_export_are_disabled_while_adding_or_busy(self):
+        self.assertTrue(self.dialog.import_button.isEnabled())
+        self.dialog.start_add_repository()
+        self.assertFalse(self.dialog.import_button.isEnabled())
 
     def wait_for_task(self, owner):
         deadline = time.monotonic() + 5
