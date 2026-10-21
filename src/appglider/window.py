@@ -56,7 +56,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from appglider import APP_ICON, APP_NAME, APP_VERSION, github_status
+from appglider import APP_ICON, APP_NAME, APP_UPDATE_ICON, APP_VERSION, github_status
 from appglider.catalog import App
 from appglider.icons import icon_pixmap
 from appglider.jobs import Task, TaskResult
@@ -106,8 +106,25 @@ THEMES: dict[str, tuple[str, ...]] = {
     "Earthy": ("#2a2420", "#342d28", "#f6f1e7", "#c4b8a6", "#4d4239", "#d98a5b"),
     "Sandstone": ("#2b2923", "#35332b", "#f7f4e9", "#c9c2ac", "#4a463a", "#d6b567"),
 }
+CHECK_INTERVALS = (
+    ("Every 3 hours", 3),
+    ("Every 6 hours", 6),
+    ("Every 12 hours", 12),
+    ("Every 24 hours", 24),
+    ("Only when I choose", 0),
+)
+DEFAULT_CHECK_HOURS = 6
 SYSTEM_THEME = "System"
 THEME_CHOICES = [SYSTEM_THEME, *THEMES]
+
+
+def check_interval_hours(settings: QSettings) -> int:
+    """Hours between scheduled update checks; 0 means only when asked."""
+    try:
+        hours = int(str(settings.value("general/check-interval-hours", DEFAULT_CHECK_HOURS)))
+    except ValueError:
+        return DEFAULT_CHECK_HOURS
+    return hours if hours in {value for _, value in CHECK_INTERVALS} else DEFAULT_CHECK_HOURS
 
 
 def blend_colours(top: QColor, bottom: QColor, weight: float) -> str:
@@ -605,6 +622,28 @@ class SettingsDialog(QDialog):
         )
         self.close_to_tray.setToolTip("Applies when a system tray is available. Use Quit to exit.")
         general.addWidget(self.close_to_tray)
+        updates = QGroupBox("Updates")
+        updates_layout = QVBoxLayout(updates)
+        updates_form = QFormLayout()
+        self.check_interval = QComboBox()
+        self.check_interval.setItemDelegate(QStyledItemDelegate(self.check_interval))
+        self.check_interval.setAccessibleName("Check for updates")
+        for label, hours in CHECK_INTERVALS:
+            self.check_interval.addItem(label, hours)
+        self.check_interval.setCurrentIndex(
+            max(0, self.check_interval.findData(check_interval_hours(settings)))
+        )
+        updates_form.addRow("Check for updates", self.check_interval)
+        updates_layout.addLayout(updates_form)
+        updates_note = QLabel(
+            "Checks the apps you have installed while AppGlider is running, including in the "
+            "tray. Each check uses about one GitHub request per installed app, and is skipped "
+            "when few requests remain."
+        )
+        updates_note.setObjectName("muted")
+        updates_note.setWordWrap(True)
+        updates_layout.addWidget(updates_note)
+        general.addWidget(updates)
         downloads = QGroupBox("Downloads")
         download_layout = QVBoxLayout(downloads)
         download_layout.addWidget(QLabel("Install new applications in"))
@@ -894,7 +933,9 @@ class LauncherWindow(QMainWindow):
         self.tabs.currentChanged.connect(self.refresh)
         QApplication.styleHints().colorSchemeChanged.connect(self.apply_theme)
         self.scroll_area.viewport().installEventFilter(self)
-        self.tray = QSystemTrayIcon(self.windowIcon(), self)
+        self.tray_icons = (QIcon(str(APP_ICON)), QIcon(str(APP_UPDATE_ICON)))
+        self.tray = QSystemTrayIcon(self.tray_icons[0], self)
+        self.tray_has_updates = False
         self.tray_menu = QMenu(self)
         self.tray_menu.addAction("Open AppGlider").triggered.connect(self.show_launcher)
         self.tray_check_action = self.tray_menu.addAction("Refresh releases")
@@ -914,6 +955,28 @@ class LauncherWindow(QMainWindow):
         self.github_timer.start(1000)
         self.update_github_status()
         self.scan_installed()
+        self.update_timer = QTimer(self)
+        self.update_timer.timeout.connect(self.scheduled_check)
+        self.schedule_update_checks()
+
+    def schedule_update_checks(self) -> None:
+        hours = check_interval_hours(self.settings)
+        if hours:
+            self.update_timer.start(hours * 60 * 60 * 1000)
+        else:
+            self.update_timer.stop()
+
+    def scheduled_check(self) -> None:
+        """Check installed apps on the chosen schedule, without disturbing a running task."""
+        if (
+            self.task is None
+            and not self.checks.busy
+            and not self.close_after_release
+            and not self.quitting
+            and self.installed
+            and not github_status.quota_low()
+        ):
+            self.refresh_releases()
 
     def update_github_status(self) -> None:
         label, details, limited = github_request_status()
@@ -969,6 +1032,9 @@ class LauncherWindow(QMainWindow):
         self.tabs.setTabText(1, f"Installed ({len(self.installed)})")
         self.tabs.setTabText(2, f"Updates ({update_count})")
         self.tray.setToolTip(f"AppGlider · Updates: {update_count}")
+        if (update_count > 0) != self.tray_has_updates:
+            self.tray_has_updates = update_count > 0
+            self.tray.setIcon(self.tray_icons[int(self.tray_has_updates)])
         self.tray_check_action.setEnabled(not self.checks.busy and bool(self.installed))
         tray_apps = [
             (app, self.library.icon_path(app)) for app in self.apps if app.id in self.installed
@@ -1091,6 +1157,10 @@ class LauncherWindow(QMainWindow):
             self.apply_theme()
         if accepted:
             self.settings.setValue("general/close-to-tray", dialog.close_to_tray.isChecked())
+            self.settings.setValue(
+                "general/check-interval-hours", dialog.check_interval.currentData()
+            )
+            self.schedule_update_checks()
             self.settings.setValue("appearance/theme", dialog.theme.currentText())
             self.settings.setValue("installation/folder", dialog.folder.text())
             self.library.apps_dir = Path(dialog.folder.text())

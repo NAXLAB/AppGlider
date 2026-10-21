@@ -36,6 +36,17 @@ def quota_plentiful() -> bool:
     )
 
 
+def quota_low() -> bool:
+    """True only when GitHub last reported fewer requests than a scheduled check should use."""
+    with _lock:
+        status = _status
+    return (
+        status.remaining is not None
+        and status.reset_at > time.time()
+        and status.remaining < PLENTIFUL_QUOTA
+    )
+
+
 def observe_headers(headers: Mapping[str, str]) -> None:
     global _status
     values = {name.lower(): value for name, value in headers.items()}

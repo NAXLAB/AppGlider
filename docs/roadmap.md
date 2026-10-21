@@ -14,6 +14,10 @@ order. Designs may change after discussion.
 
 ## Completed
 
+- **Scheduled update checks and a tray update badge:** a General setting (every 3, 6, 12
+  or 24 hours, or manual) and an amber badge on the tray icon while updates wait. See the
+  [usage guide](usage.md#scheduled-update-checks-and-the-tray-badge). A system
+  notification when updates appear is not built.
 - **Empty first run:** a new library is empty and offers **+ Add app** and **Import catalog…**.
   The ArtCraft apps and SolidCraft are an example catalog in `docs/catalogs/`, not a built-in
   list; every app can be removed. Those apps keep their bundled icons and established ids,
@@ -36,12 +40,6 @@ order. The interaction needs further discussion before implementation, including
 - Keyboard access and preserving the layout across restarts and different window sizes.
 
 Hiding a card should preserve its repository definition and any installed AppImage.
-
-## Tray update indicator
-
-Proposed: show a distinct tray icon state when updates are pending, such as a small accent
-dot on the wing. Do not rely on colour alone, and check how common desktop themes recolour
-tray icons. The tooltip already reports the update count.
 
 ## Offline starter catalog — proposal
 

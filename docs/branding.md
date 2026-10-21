@@ -9,6 +9,11 @@ AppHarbour, which was already in use.
 Settings > Appearance offers System (the desktop's native colours, the default), Light,
 Dark, Forest, Earthy and Sandstone.
 
+While updates are waiting, the tray shows `appglider-update.png` (source
+`docs/branding/appglider-update-icon.svg`): the same wing with an amber badge and an up arrow
+in the lower right, a transparent ring cut around the badge so it separates from the
+feathers. The arrow keeps it from relying on colour alone.
+
 The vector source is `docs/branding/appglider-icon.svg`, drawn in VectorCraft: the top
 feather's curve is copied, rotated and scaled for the other two, with real 12 pt gaps cut
 between them because Qt's SVG renderer ignores masks.

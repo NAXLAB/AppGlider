@@ -47,6 +47,7 @@ def main() -> None:
         home = Path(temporary)
         report = run(image, home)
         assert report["app"] == "AppGlider" and report["icon"], report
+        assert report["update_icon"] and report["update_checks_hours"] == 6, report
         project = Path(__file__).resolve().parents[1] / "pyproject.toml"
         version = tomllib.loads(project.read_text())["project"]["version"]
         assert report["version"] == version, report

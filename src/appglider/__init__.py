@@ -5,6 +5,7 @@ from pathlib import Path
 
 APP_NAME = "AppGlider"
 APP_ICON = Path(__file__).parent / "assets" / "icons" / "appglider.png"
+APP_UPDATE_ICON = Path(__file__).parent / "assets" / "icons" / "appglider-update.png"
 
 try:
     APP_VERSION = version("appglider")

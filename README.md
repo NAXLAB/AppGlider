@@ -18,7 +18,8 @@ Example library using the Forest appearance. Versions shown are illustrative.
 ## Features
 
 - Install and launch applications from a searchable card library.
-- Check installed apps for updates in the background and roll back to the previous version.
+- Check installed apps for updates on a schedule you choose, with a tray badge when updates
+  wait, and roll back to the previous version.
 - Verify downloads against published SHA-256 checksums before installation.
 - Add supported GitHub repositories directly from the library, or import and export a
   plain-text TOML [catalog](docs/usage.md#import-and-export-catalogs) of them.

@@ -33,7 +33,7 @@ from PySide6.QtWidgets import (
 )
 from test_library import APP, appimage_bytes, release_for
 
-from appglider import APP_ICON, APP_VERSION, github_status, releases
+from appglider import APP_ICON, APP_UPDATE_ICON, APP_VERSION, github_status, releases
 from appglider.catalog import custom_app
 from appglider.jobs import TaskResult
 from appglider.library import Installed, Library
@@ -184,6 +184,105 @@ class LibraryTests(unittest.TestCase):
             actions[0].trigger()
             launch.assert_called_once_with(APP.id)
         self.assertTrue(self.window.tray_check_action.isEnabled())
+
+    def test_tray_icon_gets_an_update_badge_only_while_updates_wait(self) -> None:
+        window = self.window
+        self.assertFalse(window.tray_has_updates)
+        self.assertEqual(window.tray.icon().cacheKey(), window.tray_icons[0].cacheKey())
+        payload = appimage_bytes()
+        with patch("appglider.releases.request", return_value=io.BytesIO(payload)):
+            window.library.install(APP, release_for("1.0.0", payload), Event(), lambda *args: None)
+        window.releases[APP.id] = release_for("1.1.0", payload)
+        window.scan_installed()
+        self.assertTrue(window.tray_has_updates)
+        self.assertEqual(window.tray.icon().cacheKey(), window.tray_icons[1].cacheKey())
+        self.assertIn("Updates: 1", window.tray.toolTip())
+        self.assertNotEqual(window.tray_icons[0].cacheKey(), window.tray_icons[1].cacheKey())
+        window.releases[APP.id] = release_for("1.0.0", payload)
+        window.scan_installed()
+        self.assertFalse(window.tray_has_updates)
+        self.assertEqual(window.tray.icon().cacheKey(), window.tray_icons[0].cacheKey())
+        for icon in (APP_ICON, APP_UPDATE_ICON):
+            self.assertTrue(QImage(str(icon)).hasAlphaChannel())
+            self.assertEqual(QImage(str(icon)).pixelColor(0, 0).alpha(), 0)
+
+    def test_update_check_interval_defaults_to_six_hours_and_saves(self) -> None:
+        self.assertEqual(self.window.update_timer.interval(), 6 * 3600 * 1000)
+        self.assertTrue(self.window.update_timer.isActive())
+        seen: list[tuple[list[str], int]] = []
+
+        def choose(hours: int) -> None:
+            dialog = self.qt.activeModalWidget()
+            if isinstance(dialog, SettingsDialog):
+                seen.append(
+                    (
+                        [
+                            dialog.check_interval.itemText(i)
+                            for i in range(dialog.check_interval.count())
+                        ],
+                        dialog.check_interval.currentData(),
+                    )
+                )
+                dialog.check_interval.setCurrentIndex(dialog.check_interval.findData(hours))
+                dialog.accept()
+
+        QTimer.singleShot(0, lambda: choose(12))
+        self.window.open_settings()
+        self.assertEqual(
+            seen[0],
+            (
+                ["Every 3 hours", "Every 6 hours", "Every 12 hours", "Every 24 hours",
+                 "Only when I choose"],
+                6,
+            ),
+        )  # fmt: skip
+        self.assertEqual(self.settings.value("general/check-interval-hours", type=int), 12)
+        self.assertEqual(self.window.update_timer.interval(), 12 * 3600 * 1000)
+        QTimer.singleShot(0, lambda: choose(0))
+        self.window.open_settings()
+        self.assertFalse(self.window.update_timer.isActive())
+        self.assertEqual(seen[1][1], 12)
+        for stored in ("garbage", "5", "-1"):
+            self.settings.setValue("general/check-interval-hours", stored)
+            self.window.schedule_update_checks()
+            self.assertEqual(self.window.update_timer.interval(), 6 * 3600 * 1000)
+
+    def test_scheduled_checks_run_only_when_idle_with_apps_and_enough_quota(self) -> None:
+        window = self.window
+        with patch.object(window, "refresh_releases") as refresh:
+            window.scheduled_check()
+            refresh.assert_not_called()  # nothing installed
+            payload = appimage_bytes()
+            with patch("appglider.releases.request", return_value=io.BytesIO(payload)):
+                window.library.install(
+                    APP, release_for("1.0.0", payload), Event(), lambda *args: None
+                )
+            window.scan_installed()
+            window.scheduled_check()
+            refresh.assert_called_once_with()
+            refresh.reset_mock()
+            with patch("appglider.window.github_status.quota_low", return_value=True):
+                window.scheduled_check()
+            window.task = object()  # a download or other task is running
+            window.scheduled_check()
+            window.task = None
+            window.quitting = True
+            window.scheduled_check()
+            window.quitting = False
+            refresh.assert_not_called()
+
+    def test_quota_low_needs_a_known_low_unexpired_report(self) -> None:
+        original = github_status._status
+        self.addCleanup(setattr, github_status, "_status", original)
+        reset = time.time() + 600
+        github_status._status = github_status.GitHubStatus(remaining=None)
+        self.assertFalse(github_status.quota_low())
+        github_status._status = github_status.GitHubStatus(remaining=5, limit=60, reset_at=reset)
+        self.assertTrue(github_status.quota_low())
+        github_status._status = github_status.GitHubStatus(remaining=45, limit=60, reset_at=reset)
+        self.assertFalse(github_status.quota_low())
+        github_status._status = github_status.GitHubStatus(remaining=5, limit=60, reset_at=1)
+        self.assertFalse(github_status.quota_low())  # the window has reset
 
     def test_hiding_keeps_download_running_and_quit_can_cancel_safely(self) -> None:
         with (

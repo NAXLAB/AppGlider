@@ -208,6 +208,23 @@ ArtCraft apps and SolidCraft; download it and choose **Import catalog…**.
   choose **Find icons**.
 - Names and descriptions are shown as plain text, never as formatted text or links.
 
+## Scheduled update checks and the tray badge
+
+AppGlider checks your installed apps when it starts, and then on a schedule while it is
+running, including when it sits in the tray. Choose **Settings → General → Check for
+updates**: every 3, 6 (default), 12 or 24 hours, or **Only when I choose**, which leaves
+checking to **Refresh releases**. Nothing runs when AppGlider is not running.
+
+GitHub's anonymous allowance is 60 requests an hour, and a check uses about one request per
+installed app (answers that have not changed count too). A scheduled check is therefore
+skipped while GitHub last reported fewer than 30 requests left, when a download or another
+check is running, and when nothing is installed. The footer's GitHub status shows the
+allowance.
+
+When at least one update is waiting, the tray icon shows an amber badge with an up arrow on
+the wing; the tooltip also gives the count ("AppGlider · Updates: 2"). The badge goes away
+once nothing is waiting.
+
 ## Settings and desktop integration
 
 Settings has General, Applications, Storage and About sections.

@@ -69,6 +69,8 @@ def main() -> int:
                         "catalog": len(window.apps),
                         "welcome": window.welcome.isVisible(),
                         "icon": not window.windowIcon().isNull(),
+                        "update_icon": not window.tray_icons[1].pixmap(32, 32).isNull(),
+                        "update_checks_hours": window.update_timer.interval() // 3_600_000,
                         "https_certificates": ssl.create_default_context().cert_store_stats()[
                             "x509_ca"
                         ],
