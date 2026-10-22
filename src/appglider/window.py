@@ -150,7 +150,7 @@ THEME_CHOICES = [SYSTEM_THEME, *THEMES]
 def check_interval_hours(settings: QSettings) -> int:
     """Hours between scheduled update checks; 0 means only when asked."""
     try:
-        hours = int(str(settings.value("general/check-interval-hours", DEFAULT_CHECK_HOURS)))
+        hours = int(str(settings.value("General/check-interval-hours", DEFAULT_CHECK_HOURS)))
     except ValueError:
         return DEFAULT_CHECK_HOURS
     return hours if hours in {value for _, value in CHECK_INTERVALS} else DEFAULT_CHECK_HOURS
@@ -768,7 +768,7 @@ class SettingsDialog(QDialog):
         window_layout = QVBoxLayout(window_group)
         self.close_to_tray = QCheckBox("Keep AppGlider in the tray when closing its window")
         self.close_to_tray.setChecked(
-            bool(settings.value("general/close-to-tray", True, type=bool))
+            bool(settings.value("General/close-to-tray", True, type=bool))
         )
         self.close_to_tray.setToolTip("Applies when a system tray is available. Use Quit to exit.")
         window_layout.addWidget(self.close_to_tray)
@@ -1477,9 +1477,9 @@ class LauncherWindow(QMainWindow):
         if not accepted:
             self.apply_theme()
         if accepted:
-            self.settings.setValue("general/close-to-tray", dialog.close_to_tray.isChecked())
+            self.settings.setValue("General/close-to-tray", dialog.close_to_tray.isChecked())
             self.settings.setValue(
-                "general/check-interval-hours", dialog.check_interval.currentData()
+                "General/check-interval-hours", dialog.check_interval.currentData()
             )
             self.settings.setValue("notifications/updates", dialog.notify_updates.isChecked())
             self.schedule_update_checks()
@@ -1893,7 +1893,7 @@ class LauncherWindow(QMainWindow):
         self.settings.setValue("window/geometry", self.saveGeometry())
         if (
             not self.quitting
-            and self.settings.value("general/close-to-tray", True, type=bool)
+            and self.settings.value("General/close-to-tray", True, type=bool)
             and self.tray.isVisible()
             and QSystemTrayIcon.isSystemTrayAvailable()
         ):

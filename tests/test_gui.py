@@ -48,6 +48,7 @@ from appglider.window import (
     LauncherWindow,
     OrphansDialog,
     SettingsDialog,
+    check_interval_hours,
     fit_size,
     notified_versions,
     pinned_apps,
@@ -524,16 +525,30 @@ class LibraryTests(unittest.TestCase):
                 6,
             ),
         )  # fmt: skip
-        self.assertEqual(self.settings.value("general/check-interval-hours", type=int), 12)
+        self.assertEqual(self.settings.value("General/check-interval-hours", type=int), 12)
         self.assertEqual(self.window.update_timer.interval(), 12 * 3600 * 1000)
         QTimer.singleShot(0, lambda: choose(0))
         self.window.open_settings()
         self.assertFalse(self.window.update_timer.isActive())
         self.assertEqual(seen[1][1], 12)
         for stored in ("garbage", "5", "-1"):
-            self.settings.setValue("general/check-interval-hours", stored)
+            self.settings.setValue("General/check-interval-hours", stored)
             self.window.schedule_update_checks()
             self.assertEqual(self.window.update_timer.interval(), 6 * 3600 * 1000)
+
+    def test_general_settings_persist_in_one_section_across_restarts(self) -> None:
+        self.settings.setValue("General/check-interval-hours", 12)
+        self.settings.sync()
+        for hours in (12, 3):  # each restart reads the saved value, then saves another
+            reopened = QSettings(self.settings.fileName(), QSettings.Format.IniFormat)
+            self.assertEqual(check_interval_hours(reopened), hours)
+            reopened.setValue("General/check-interval-hours", 3 if hours == 12 else 1)
+            reopened.sync()
+        text = Path(self.settings.fileName()).read_text()
+        self.assertEqual(text.lower().count("[%general]") + text.count("[General]"), 1)
+        self.assertEqual(
+            check_interval_hours(QSettings(self.settings.fileName(), QSettings.Format.IniFormat)), 1
+        )
 
     def test_scheduled_checks_run_only_when_idle_with_apps_and_enough_quota(self) -> None:
         window = self.window
@@ -1611,7 +1626,7 @@ class LibraryTests(unittest.TestCase):
 
         QTimer.singleShot(0, save)
         self.window.open_settings()
-        self.assertFalse(self.settings.value("general/close-to-tray", True, type=bool))
+        self.assertFalse(self.settings.value("General/close-to-tray", True, type=bool))
         with patch("appglider.window.QSystemTrayIcon.isSystemTrayAvailable", return_value=True):
             self.window.tray.show()
             event = QCloseEvent()
