@@ -16,7 +16,7 @@ from unittest.mock import patch
 
 from catalog_fixture import APPS, stock
 
-from appglider import APP_ICON
+from appglider import APP_TASKBAR_ICON
 from appglider.library import Installed, Library, Orphan, check_appimage, desktop_exec
 from appglider.releases import (
     Cancelled,
@@ -621,7 +621,7 @@ class LibraryTests(unittest.TestCase):
         icon.write_bytes(b"icon from an older release")
         before = shortcut.read_text()
         self.library.refresh_launcher_shortcut([str(image)], packaged=True)
-        self.assertEqual(icon.read_bytes(), APP_ICON.read_bytes())
+        self.assertEqual(icon.read_bytes(), APP_TASKBAR_ICON.read_bytes())
         self.assertEqual(shortcut.read_text(), before)
 
     def test_refresh_still_refuses_foreign_shortcuts(self) -> None:

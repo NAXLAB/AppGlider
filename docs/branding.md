@@ -3,7 +3,7 @@
 This page is for contributors and designers.
 
 AppGlider is the user-facing name. Its icon is a swept wing of three
-S-curved feathers in three greens (`#8FAE75`, `#5B7F52`, `#3F5E3A`) on a transparent
+S-curved feathers in ivory cream and forest greens (`#F4F3EB`, `#8FAE75`, `#486140`) on a transparent
 background, so it reads on both light and dark desktops and panels. The Forest theme's
 palette is `#1C1F1A`, `#5B7F52`, `#8FAE75`, `#D6D1C4` and `#F4F3EB`. The name replaced
 AppHarbour, which was already in use.
@@ -16,9 +16,13 @@ While updates are waiting, the tray shows `appglider-update.png` (source
 in the lower right, a transparent ring cut around the badge so it separates from the
 feathers. The arrow keeps it from relying on colour alone.
 
-The vector source is `docs/branding/appglider-icon.svg`, drawn in VectorCraft: the top
-feather's curve is copied, rotated and scaled for the other two, with real 12 pt gaps cut
-between them because Qt's SVG renderer ignores masks.
+`appglider-taskbar.png` (source `docs/branding/appglider-taskbar-icon.svg`) is the same wing on
+a dark rounded square. It is the window, taskbar, desktop shortcut and AppImage icon; the
+transparent `appglider.png` is used inside the app and for the tray. PNG sizes from 16 to 512 px
+for both are in `docs/branding/icons/`.
+
+The vector source is `docs/branding/appglider-icon.svg`: the feathers have real gaps cut
+between them so they render cleanly across light and dark backgrounds.
 `src/appglider/assets/icons/appglider.png` is its 1024 px render. Qt renders the same PNG at
 the sizes required by the window, header, desktop shortcut and tray; no extra dependency is
 needed. The bundled icons for the ArtCraft example catalog's apps remain separate.

@@ -62,7 +62,8 @@ def main() -> None:
         recipe = stage / "appglider"
         recipe.mkdir()
         shutil.copy2(PACKAGING / "appglider.desktop", recipe)
-        shutil.copy2(ROOT / "src/appglider/assets/icons/appglider.png", recipe)
+        icon = ROOT / "src/appglider/assets/icons/appglider-taskbar.png"
+        shutil.copy2(icon, recipe / "appglider.png")
         (recipe / "requirements.txt").write_text(
             (PACKAGING / "runtime-requirements.txt").read_text() + f"\n{wheel}\n"
         )

@@ -10,7 +10,7 @@ from PySide6.QtCore import QStandardPaths, QTimer
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication, QComboBox
 
-from appglider import APP_ICON, APP_NAME, APP_VERSION
+from appglider import APP_NAME, APP_TASKBAR_ICON, APP_VERSION
 from appglider.catalogfile import EXAMPLE_CATALOG
 from appglider.catalogfile import read as read_catalog
 from appglider.instance import SingleInstance
@@ -31,7 +31,7 @@ def main() -> int:
     app.setApplicationVersion(APP_VERSION)
     app.setApplicationDisplayName(APP_NAME)
     app.setDesktopFileName("appglider")
-    app.setWindowIcon(QIcon(str(APP_ICON)))
+    app.setWindowIcon(QIcon(str(APP_TASKBAR_ICON)))
     app.setStyle("Fusion")
     smoke = "--smoke-test" in sys.argv
     instance = SingleInstance(

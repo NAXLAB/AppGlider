@@ -67,7 +67,14 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from appglider import APP_ICON, APP_NAME, APP_UPDATE_ICON, APP_VERSION, github_status
+from appglider import (
+    APP_ICON,
+    APP_NAME,
+    APP_TASKBAR_ICON,
+    APP_UPDATE_ICON,
+    APP_VERSION,
+    github_status,
+)
 from appglider.catalog import App
 from appglider.icons import icon_pixmap
 from appglider.jobs import Task, TaskResult
@@ -979,7 +986,7 @@ class LauncherWindow(QMainWindow):
         self.close_after_task = False
         self.quitting = False
         self.setWindowTitle(APP_NAME)
-        self.setWindowIcon(QIcon(str(APP_ICON)))
+        self.setWindowIcon(QIcon(str(APP_TASKBAR_ICON)))
         self.resize(fit_size(1040, 816, screen_area(None)))
         saved = self.settings.value("window/geometry")
         if isinstance(saved, QByteArray | bytes):
@@ -992,7 +999,7 @@ class LauncherWindow(QMainWindow):
         self.setCentralWidget(body)
         header = QHBoxLayout()
         logo = QLabel()
-        logo.setPixmap(self.windowIcon().pixmap(96, 96))
+        logo.setPixmap(QIcon(str(APP_ICON)).pixmap(96, 96))
         logo.setFixedSize(96, 96)
         logo.setAccessibleName(APP_NAME)
         header.addWidget(logo)

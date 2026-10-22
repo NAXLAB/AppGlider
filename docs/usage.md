@@ -29,7 +29,7 @@ catalog…** and **Example catalog**.
 Once you have apps, the tabs along the top filter them. The **cog** at the top right opens
 Settings; **Sort** and **Refresh releases** sit above the cards.
 
-![The AppGlider window showing six installed apps, two with updates waiting](previews/appglider-library.png)
+![The AppGlider window showing 12 installed apps, one with an update waiting](previews/appglider-library.png)
 
 
 - **All apps**: everything in your library, installed or not.

@@ -10,7 +10,7 @@ or appear in your menu. AppGlider takes care of that: it downloads apps from the
 pages, checks the download is intact, adds them to your application menu and lets you know
 when a new version is out.
 
-![AppGlider showing six installed apps, two with updates waiting](docs/previews/appglider-library.png)
+![AppGlider showing 12 installed apps, one with an update waiting](docs/previews/appglider-library.png)
 
 *An example library using the default look. The versions shown are made up.*
 

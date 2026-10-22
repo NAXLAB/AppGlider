@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from threading import Event
 
-from appglider import APP_ICON
+from appglider import APP_ICON, APP_TASKBAR_ICON
 from appglider.catalog import (
     App,
     custom_app,
@@ -832,7 +832,7 @@ class Library:
         if icon.parent.is_symlink() or icon.is_symlink():
             return
         with contextlib.suppress(OSError):
-            data = APP_ICON.read_bytes()
+            data = APP_TASKBAR_ICON.read_bytes()
             if not icon.is_file() or icon.read_bytes() != data:
                 atomic_bytes(icon, data)
 
@@ -847,7 +847,7 @@ class Library:
         icon = self.data_dir / "icons" / "appglider.png"
         if icon.parent.is_symlink() or icon.is_symlink():
             raise OSError("The shortcut icon path is a symbolic link; it was left untouched.")
-        atomic_bytes(icon, APP_ICON.read_bytes())
+        atomic_bytes(icon, APP_TASKBAR_ICON.read_bytes())
         atomic_bytes(
             shortcut,
             (
